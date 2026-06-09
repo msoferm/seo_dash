@@ -1,0 +1,82 @@
+import { Routes, Route, NavLink, useParams, Link } from "react-router-dom";
+import { Users, BarChart3, Search, MessageSquare, HelpCircle, Home, LogOut } from "lucide-react";
+import { useAuth } from "./AuthContext";
+import ClientsPage from "./pages/ClientsPage";
+import ClientDashboard from "./pages/ClientDashboard";
+import KeywordsPage from "./pages/KeywordsPage";
+import FaqGeneratorPage from "./pages/FaqGeneratorPage";
+import ClaudeChatPage from "./pages/ClaudeChatPage";
+import LoginPage from "./pages/LoginPage";
+import NotMemberPage from "./pages/NotMemberPage";
+import Spinner from "./components/Spinner";
+
+function Sidebar() {
+  const { clientId } = useParams();
+  const { user, signOut } = useAuth();
+  const cid = clientId;
+  const navItem = "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors";
+  const active = "bg-brand-50 text-brand-700";
+  const inactive = "text-slate-600 hover:bg-slate-100";
+  return (
+    <aside className="w-64 bg-white border-l border-slate-200 p-4 flex flex-col gap-1 shrink-0">
+      <Link to="/" className="text-xl font-bold text-brand-700 mb-4 px-3">דאשבורד SEO</Link>
+      <NavLink to="/" end className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
+        <Home size={18} /> כל הלקוחות
+      </NavLink>
+      {cid && (
+        <>
+          <div className="text-xs text-slate-400 uppercase mt-4 px-3">הלקוח הנוכחי</div>
+          <NavLink to={`/clients/${cid}`} end className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
+            <BarChart3 size={18} /> סקירה
+          </NavLink>
+          <NavLink to={`/clients/${cid}/keywords`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
+            <Search size={18} /> מילות מפתח
+          </NavLink>
+          <NavLink to={`/clients/${cid}/faq`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
+            <HelpCircle size={18} /> FAQ Generator
+          </NavLink>
+          <NavLink to={`/clients/${cid}/chat`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
+            <MessageSquare size={18} /> צ׳אט עם קלוד
+          </NavLink>
+        </>
+      )}
+      <div className="mt-auto pt-4 border-t border-slate-100 text-xs text-slate-500">
+        <div className="px-3 truncate flex items-center gap-1 mb-2">
+          <Users size={14} /> {user?.email}
+        </div>
+        <button className="w-full text-right px-3 py-1 hover:bg-slate-50 rounded text-rose-600 flex items-center gap-1" onClick={signOut}>
+          <LogOut size={14} /> התנתק
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function Layout({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="h-full flex">
+      <Sidebar />
+      <main className="flex-1 overflow-y-auto p-6">{children}</main>
+    </div>
+  );
+}
+
+export default function App() {
+  const { session, isTeamMember, loading } = useAuth();
+
+  if (loading) {
+    return <div className="h-screen flex items-center justify-center"><Spinner /></div>;
+  }
+  if (!session) return <LoginPage />;
+  if (isTeamMember === false) return <NotMemberPage />;
+
+  return (
+    <Routes>
+      <Route path="/" element={<Layout><ClientsPage /></Layout>} />
+      <Route path="/clients/:clientId" element={<Layout><ClientDashboard /></Layout>} />
+      <Route path="/clients/:clientId/keywords" element={<Layout><KeywordsPage /></Layout>} />
+      <Route path="/clients/:clientId/faq" element={<Layout><FaqGeneratorPage /></Layout>} />
+      <Route path="/clients/:clientId/chat" element={<Layout><ClaudeChatPage /></Layout>} />
+    </Routes>
+  );
+}

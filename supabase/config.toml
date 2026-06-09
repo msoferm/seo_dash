@@ -1,0 +1,53 @@
+# Supabase project config (for local dev with `supabase` CLI).
+# This file is committed; secrets stay in Supabase dashboard or .env.
+
+project_id = "seo-dashboard"
+
+[api]
+enabled = true
+port = 54321
+
+[auth]
+enabled = true
+site_url = "http://localhost:5173"
+additional_redirect_urls = ["http://localhost:5173/**"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = false
+enable_confirmations = false
+
+[functions.claude-chat]
+verify_jwt = true
+
+[functions.faq-generate]
+verify_jwt = true
+
+[functions.faq-refine]
+verify_jwt = true
+
+[functions.faq-suggest]
+verify_jwt = true
+
+[functions.crawl-site]
+verify_jwt = true
+
+[functions.fetch-page]
+verify_jwt = true
+
+[functions.upload-keywords]
+verify_jwt = true
+
+[functions.gsc-authorize]
+verify_jwt = true
+
+[functions.gsc-callback]
+verify_jwt = false  # Google calls this directly; we verify via state token
+
+[functions.gsc-sync]
+verify_jwt = true
+
+[functions.ga4-traffic]
+verify_jwt = true
