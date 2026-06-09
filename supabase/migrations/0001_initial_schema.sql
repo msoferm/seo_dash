@@ -3,6 +3,7 @@
 -- in team_members can read/write.
 
 create extension if not exists "pgcrypto";
+create extension if not exists pg_trgm;
 
 -- Team membership: enable the 3-5 team users to collaborate
 create table team_members (
@@ -38,8 +39,6 @@ create table keywords (
 );
 create index keywords_client_idx on keywords(client_id);
 create index keywords_term_trgm on keywords using gin (term gin_trgm_ops);
--- requires pg_trgm; create after enabling
-create extension if not exists pg_trgm;
 
 create table monthly_searches (
   id bigserial primary key,
