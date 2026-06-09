@@ -122,13 +122,12 @@ as $$
   select exists (select 1 from team_members where user_id = auth.uid())
 $$;
 
--- Team members: see all team members, but only admins can change roles
-create policy "team_members select" on team_members
-  for select using (is_team_member());
-create policy "team_members admin all" on team_members
-  for all using (
-    exists (select 1 from team_members where user_id = auth.uid() and role = 'admin')
-  );
+-- team_members policies must NOT call is_team_member() (which queries team_members),
+-- or any subquery on team_members, otherwise RLS recurses infinitely. Allow any
+-- authenticated user to read; writes are restricted to service_role (admins use the
+-- Supabase SQL editor or admin-elevated server functions).
+create policy "team_members read authenticated" on team_members
+  for select to authenticated using (true);
 
 -- All other tables: any team member can read/write
 create policy "clients team access" on clients for all using (is_team_member()) with check (is_team_member());
