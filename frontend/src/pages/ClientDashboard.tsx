@@ -1,20 +1,38 @@
-import { useParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, FileText, MousePointerClick, Eye, TrendingUp, RefreshCw, Link2 } from "lucide-react";
+import { Search, FileText, MousePointerClick, Eye, TrendingUp, RefreshCw, Link2, Pencil, ListChecks } from "lucide-react";
 import * as api from "../api";
 import KpiCard from "../components/KpiCard";
 import PageHeader from "../components/PageHeader";
 import Spinner from "../components/Spinner";
+import EditClientModal from "../components/EditClientModal";
+import GscPropertyPicker from "../components/GscPropertyPicker";
 
 export default function ClientDashboard() {
   const { clientId } = useParams();
   const cid = Number(clientId);
   const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [showEdit, setShowEdit] = useState(false);
+  const [showGscPicker, setShowGscPicker] = useState(false);
+
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard", cid],
     queryFn: () => api.getDashboard(cid),
     enabled: !!cid,
   });
+
+  // If we just returned from Google OAuth and the client doesn't have a gsc_property yet, open the picker
+  useEffect(() => {
+    if (searchParams.get("connected") === "1" && data && !data.client.gsc_property) {
+      setShowGscPicker(true);
+      // Clear the query param so it doesn't re-open
+      const next = new URLSearchParams(searchParams);
+      next.delete("connected");
+      setSearchParams(next, { replace: true });
+    }
+  }, [data, searchParams, setSearchParams]);
 
   const connectGoogle = useMutation({
     mutationFn: () => api.gscAuthorize(cid),
@@ -28,6 +46,7 @@ export default function ClientDashboard() {
 
   if (isLoading || !data) return <Spinner />;
   const googleConnected = !!data.client.google_token_json;
+  const hasGscProperty = !!data.client.gsc_property;
 
   return (
     <div>
@@ -36,14 +55,26 @@ export default function ClientDashboard() {
         subtitle={data.client.domain}
         actions={
           <>
+            <button className="btn-secondary" onClick={() => setShowEdit(true)}>
+              <Pencil size={18} /> ערוך לקוח
+            </button>
             {!googleConnected ? (
               <button className="btn-primary" onClick={() => connectGoogle.mutate()} disabled={connectGoogle.isPending}>
                 <Link2 size={18} /> חבר Google
               </button>
-            ) : (
-              <button className="btn-secondary" onClick={() => syncGsc.mutate()} disabled={syncGsc.isPending}>
-                <RefreshCw size={18} className={syncGsc.isPending ? "animate-spin" : ""} /> סנכרן GSC
+            ) : !hasGscProperty ? (
+              <button className="btn-primary" onClick={() => setShowGscPicker(true)}>
+                <ListChecks size={18} /> בחר Property
               </button>
+            ) : (
+              <>
+                <button className="btn-secondary" onClick={() => setShowGscPicker(true)}>
+                  <ListChecks size={18} /> שנה Property
+                </button>
+                <button className="btn-primary" onClick={() => syncGsc.mutate()} disabled={syncGsc.isPending}>
+                  <RefreshCw size={18} className={syncGsc.isPending ? "animate-spin" : ""} /> סנכרן GSC
+                </button>
+              </>
             )}
           </>
         }
@@ -51,7 +82,7 @@ export default function ClientDashboard() {
 
       {connectGoogle.isError && (
         <div className="card mb-4 bg-amber-50 border-amber-200 text-amber-800 text-sm">
-          {(connectGoogle.error as any)?.message || "שגיאת חיבור — ודא ש-GOOGLE_CLIENT_ID/SECRET מוגדרים ב-Supabase secrets"}
+          {(connectGoogle.error as any)?.message || "שגיאת חיבור"}
         </div>
       )}
       {syncGsc.isError && (
@@ -62,6 +93,12 @@ export default function ClientDashboard() {
       {syncGsc.isSuccess && (
         <div className="card mb-4 bg-emerald-50 border-emerald-200 text-emerald-800 text-sm">
           סונכרנו {(syncGsc.data as any).synced} שורות מ-GSC.
+        </div>
+      )}
+
+      {googleConnected && !hasGscProperty && (
+        <div className="card mb-4 bg-amber-50 border-amber-200 text-amber-800 text-sm">
+          Google מחובר, אבל עדיין לא נבחר GSC property. לחץ "בחר Property" למעלה.
         </div>
       )}
 
@@ -117,6 +154,9 @@ export default function ClientDashboard() {
           )}
         </div>
       </div>
+
+      {showEdit && <EditClientModal client={data.client} onClose={() => setShowEdit(false)} />}
+      {showGscPicker && <GscPropertyPicker client={data.client} onClose={() => setShowGscPicker(false)} />}
     </div>
   );
 }

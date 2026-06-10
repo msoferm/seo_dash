@@ -174,6 +174,18 @@ export async function gscSync(clientId: number, days = 90): Promise<{ synced: nu
   return await invokeFn("gsc-sync", { client_id: clientId, days });
 }
 
+export interface GscSite { site_url: string; permission_level: string }
+export async function gscListSites(clientId: number): Promise<{ sites: GscSite[] }> {
+  return await invokeFn("gsc-list-sites", { client_id: clientId });
+}
+
+export async function bulkImportGscProperties(sourceClientId: number, properties: string[]) {
+  return await invokeFn<{ created: Client[]; skipped: string[]; created_count: number; skipped_count: number }>(
+    "clients-bulk-import-gsc",
+    { source_client_id: sourceClientId, properties },
+  );
+}
+
 // ===== Dashboard KPIs =====
 export interface DashboardData {
   client: Client;
