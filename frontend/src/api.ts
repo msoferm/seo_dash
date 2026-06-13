@@ -6,6 +6,7 @@ export interface Client {
   domain: string;
   gsc_property: string | null;
   ga4_property_id: string | null;
+  zefo_site_id: number | null;
   notes: string | null;
   created_at: string;
   google_token_json: string | null;
@@ -184,6 +185,94 @@ export async function bulkImportGscProperties(sourceClientId: number, properties
     "clients-bulk-import-gsc",
     { source_client_id: sourceClientId, properties },
   );
+}
+
+// ===== GA4 =====
+export interface Ga4Property { property_id: string; display_name: string; parent_account: string }
+export async function ga4ListProperties(clientId: number): Promise<{ properties: Ga4Property[] }> {
+  return await invokeFn("ga4-list-properties", { client_id: clientId });
+}
+export async function ga4Sync(clientId: number, days = 30): Promise<{ synced: number }> {
+  return await invokeFn("ga4-sync", { client_id: clientId, days });
+}
+
+// ===== ZEFO =====
+export interface ZefoSite {
+  id: number;
+  domain: string;
+  path: string | null;
+  name: string | null;
+  status: string;
+  linked_client: { client_id: number; client_name: string } | null;
+}
+export async function zefoListSites(): Promise<{ sites: ZefoSite[] }> {
+  return await invokeFn("zefo-list-sites", {});
+}
+export async function zefoLinkSite(clientId: number, zefoSiteId: number | null) {
+  return await invokeFn("zefo-link-site", { client_id: clientId, zefo_site_id: zefoSiteId });
+}
+export async function zefoSync(clientId: number): Promise<{ synced: number }> {
+  return await invokeFn("zefo-sync", { client_id: clientId });
+}
+
+export interface ZefoKeyword {
+  id: number;
+  client_id: number;
+  zefo_keyword_id: number;
+  keyword: string;
+  engine: string | null;
+  is_mobile: boolean;
+  linked_page: string | null;
+  rank_page: string | null;
+  ranking: number | null;
+  previous_ranking: number | null;
+  initial_ranking: number | null;
+  best_rank: number | null;
+  best_rank_date: string | null;
+  local_searches: number | null;
+  global_searches: number | null;
+  difficulty: number | null;
+  monthly_history: { month: string; searches: number }[] | null;
+}
+
+export async function listZefoKeywords(clientId: number, search?: string): Promise<ZefoKeyword[]> {
+  let q = supabase.from("zefo_keywords").select("*").eq("client_id", clientId).order("ranking", { ascending: true, nullsFirst: false }).limit(1000);
+  if (search) q = q.ilike("keyword", `%${search}%`);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data || [];
+}
+
+// Daily aggregated GSC for charts
+export async function gscDaily(clientId: number): Promise<{ date: string; clicks: number; impressions: number; avg_position: number }[]> {
+  const { data, error } = await supabase.from("gsc_daily").select("date, clicks, impressions, avg_position").eq("client_id", clientId).order("date");
+  if (error) throw error;
+  return data || [];
+}
+
+// GA4 daily totals for charts (organic only — server-side filtered already)
+export async function ga4Daily(clientId: number): Promise<{ date: string; sessions: number; users: number }[]> {
+  const { data, error } = await supabase
+    .from("ga4_metrics")
+    .select("date, sessions, total_users")
+    .eq("client_id", clientId);
+  if (error) throw error;
+  // Aggregate client-side per date
+  const agg = new Map<string, { sessions: number; users: number }>();
+  for (const r of data || []) {
+    const cur = agg.get(r.date) || { sessions: 0, users: 0 };
+    cur.sessions += r.sessions || 0;
+    cur.users += r.total_users || 0;
+    agg.set(r.date, cur);
+  }
+  return [...agg.entries()].map(([date, v]) => ({ date, ...v })).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export interface RankBuckets { top3: number; top10: number; top30: number; top100: number; unranked: number; total: number }
+export async function zefoRankBuckets(clientId: number): Promise<RankBuckets | null> {
+  const { data, error } = await supabase.from("zefo_rank_buckets").select("*").eq("client_id", clientId).maybeSingle();
+  if (error) throw error;
+  return data;
 }
 
 // ===== Dashboard KPIs =====

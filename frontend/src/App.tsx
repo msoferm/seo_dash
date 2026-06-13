@@ -1,11 +1,12 @@
 import { Routes, Route, NavLink, useParams, Link } from "react-router-dom";
-import { Users, BarChart3, Search, MessageSquare, HelpCircle, Home, LogOut } from "lucide-react";
+import { Users, BarChart3, Search, MessageSquare, HelpCircle, Home, LogOut, Target } from "lucide-react";
 import { useAuth } from "./AuthContext";
 import ClientsPage from "./pages/ClientsPage";
 import ClientDashboard from "./pages/ClientDashboard";
 import KeywordsPage from "./pages/KeywordsPage";
 import FaqGeneratorPage from "./pages/FaqGeneratorPage";
 import ClaudeChatPage from "./pages/ClaudeChatPage";
+import RankingsPage from "./pages/RankingsPage";
 import LoginPage from "./pages/LoginPage";
 import NotMemberPage from "./pages/NotMemberPage";
 import Spinner from "./components/Spinner";
@@ -31,6 +32,9 @@ function Sidebar() {
           </NavLink>
           <NavLink to={`/clients/${cid}/keywords`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
             <Search size={18} /> מילות מפתח
+          </NavLink>
+          <NavLink to={`/clients/${cid}/rankings`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
+            <Target size={18} /> מעקב מיקומים
           </NavLink>
           <NavLink to={`/clients/${cid}/faq`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
             <HelpCircle size={18} /> FAQ Generator
@@ -75,6 +79,7 @@ export default function App() {
       <Route path="/" element={<Layout><ClientsPage /></Layout>} />
       <Route path="/clients/:clientId" element={<Layout><ClientDashboard /></Layout>} />
       <Route path="/clients/:clientId/keywords" element={<Layout><KeywordsPage /></Layout>} />
+      <Route path="/clients/:clientId/rankings" element={<Layout><RankingsPage /></Layout>} />
       <Route path="/clients/:clientId/faq" element={<Layout><FaqGeneratorPage /></Layout>} />
       <Route path="/clients/:clientId/chat" element={<Layout><ClaudeChatPage /></Layout>} />
     </Routes>
