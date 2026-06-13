@@ -18,9 +18,23 @@ export const supabase = createClient(url, anonKey, {
 export async function invokeFn<T = any>(name: string, body: any = {}): Promise<T> {
   const { data, error } = await supabase.functions.invoke(name, { body });
   if (error) {
-    // Try to get the response body for better error messages
-    const msg = (error as any).context?.error || error.message;
-    throw new Error(msg);
+    // supabase-js wraps non-2xx responses in FunctionsHttpError with the raw Response on `context`.
+    // Read the body to get the real server error message instead of the generic "non-2xx status code".
+    const ctx = (error as any).context;
+    if (ctx && typeof ctx.text === "function") {
+      try {
+        const text = await ctx.text();
+        try {
+          const parsed = JSON.parse(text);
+          throw new Error(parsed.error || parsed.message || text);
+        } catch {
+          throw new Error(text || error.message);
+        }
+      } catch (e) {
+        if (e instanceof Error && e.message) throw e;
+      }
+    }
+    throw new Error(error.message);
   }
   return data as T;
 }
