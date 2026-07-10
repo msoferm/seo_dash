@@ -92,7 +92,56 @@ Deno.serve(async (req) => {
       const { error } = await sb.from("ga4_metrics").insert(chunk);
       if (error) throw new Error(`insert failed: ${error.message}`);
     }
-    return jsonResponse({ synced: rows.length, days });
+
+    // Report 2: conversions + sessions by traffic source / channel — ALL channels
+    // (not organic-only) so the overview can show where conversions come from.
+    let convCount = 0;
+    try {
+      const bySource = await runReport(token, client.ga4_property_id, {
+        dimensions: [
+          { name: "date" },
+          { name: "sessionDefaultChannelGroup" },
+          { name: "sessionSource" },
+        ],
+        metrics: [
+          { name: "conversions" },
+          { name: "sessions" },
+        ],
+        dateRanges: [dateRange],
+        limit: 50000,
+      });
+
+      await sb.from("ga4_conversions").delete().eq("client_id", client_id);
+
+      const now = new Date().toISOString();
+      const convRows = (bySource.rows || []).map((row: any) => {
+        const dRaw = row.dimensionValues?.[0]?.value || ""; // YYYYMMDD
+        const d = dRaw.length === 8
+          ? `${dRaw.slice(0, 4)}-${dRaw.slice(4, 6)}-${dRaw.slice(6, 8)}`
+          : null;
+        return {
+          client_id,
+          date: d,
+          channel: row.dimensionValues?.[1]?.value || null,
+          source: row.dimensionValues?.[2]?.value || null,
+          conversions: parseFloat(row.metricValues?.[0]?.value || "0"),
+          sessions: parseInt(row.metricValues?.[1]?.value || "0"),
+          last_synced: now,
+        };
+      });
+      convCount = convRows.length;
+      for (let i = 0; i < convRows.length; i += 500) {
+        const chunk = convRows.slice(i, i + 500);
+        const { error } = await sb.from("ga4_conversions").insert(chunk);
+        if (error) throw new Error(`conversions insert failed: ${error.message}`);
+      }
+    } catch (e) {
+      // Don't fail the whole sync if the conversions report has an issue —
+      // the organic metrics above already succeeded.
+      console.error("ga4 conversions report failed:", (e as Error).message);
+    }
+
+    return jsonResponse({ synced: rows.length, conversion_sources: convCount, days });
   } catch (e) {
     return errorResponse((e as Error).message, 500);
   }

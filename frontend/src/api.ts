@@ -55,6 +55,42 @@ export interface ChatSession {
   updated_at: string;
 }
 
+export interface Task {
+  id: number;
+  client_id: number;
+  title: string;
+  details: string | null;
+  status: "open" | "done";
+  source: "manual" | "claude" | "upload";
+  priority: "high" | "medium" | "low" | null;
+  sort_order: number;
+  created_at: string;
+  done_at: string | null;
+}
+
+export interface SuggestionAttachment {
+  name: string;
+  path: string;
+  type: string;
+  size: number;
+}
+
+export interface Suggestion {
+  id: number;
+  client_id: number | null;
+  author: "moshe" | "mordechai";
+  body: string | null;
+  attachments: SuggestionAttachment[];
+  created_at: string;
+}
+
+export interface Ga4ConversionRow {
+  channel: string | null;
+  source: string | null;
+  conversions: number;
+  sessions: number;
+}
+
 // ===== Clients =====
 export async function listClients(): Promise<Client[]> {
   const { data, error } = await supabase
@@ -244,18 +280,90 @@ export async function listZefoKeywords(clientId: number, search?: string): Promi
 }
 
 // Daily aggregated GSC for charts
-export async function gscDaily(clientId: number): Promise<{ date: string; clicks: number; impressions: number; avg_position: number }[]> {
-  const { data, error } = await supabase.from("gsc_daily").select("date, clicks, impressions, avg_position").eq("client_id", clientId).order("date");
+export async function gscDaily(clientId: number, from?: string, to?: string): Promise<{ date: string; clicks: number; impressions: number; avg_position: number }[]> {
+  let q = supabase.from("gsc_daily").select("date, clicks, impressions, avg_position").eq("client_id", clientId).order("date");
+  if (from) q = q.gte("date", from);
+  if (to) q = q.lte("date", to);
+  const { data, error } = await q;
   if (error) throw error;
   return data || [];
 }
 
-// GA4 daily totals for charts (organic only — server-side filtered already)
-export async function ga4Daily(clientId: number): Promise<{ date: string; sessions: number; users: number }[]> {
+// GSC KPI totals for a date range
+export interface GscKpis {
+  clicks: number;
+  impressions: number;
+  avg_position: number;
+}
+
+export async function getGscKpis(clientId: number, from: string, to: string): Promise<GscKpis> {
   const { data, error } = await supabase
+    .from("gsc_daily")
+    .select("date, clicks, impressions, avg_position")
+    .eq("client_id", clientId)
+    .gte("date", from)
+    .lte("date", to);
+  if (error) throw error;
+  const rows = data || [];
+  if (rows.length === 0) return { clicks: 0, impressions: 0, avg_position: 0 };
+  let clicks = 0;
+  let impressions = 0;
+  let weightedPos = 0;
+  let posSum = 0;
+  for (const r of rows) {
+    clicks += r.clicks || 0;
+    impressions += r.impressions || 0;
+    weightedPos += (r.avg_position || 0) * (r.impressions || 0);
+    posSum += r.avg_position || 0;
+  }
+  const avg_position = impressions > 0 ? weightedPos / impressions : posSum / rows.length;
+  return { clicks, impressions, avg_position: Math.round(avg_position * 10) / 10 };
+}
+
+// Conversions summary for a date range
+export interface ConversionsSummary {
+  total: number;
+  total_sessions: number;
+  by_source: { label: string; conversions: number; sessions: number }[];
+}
+
+export async function getConversionsSummary(clientId: number, from: string, to: string): Promise<ConversionsSummary> {
+  const { data, error } = await supabase
+    .from("ga4_conversions")
+    .select("source, channel, conversions, sessions, date")
+    .eq("client_id", clientId)
+    .gte("date", from)
+    .lte("date", to);
+  if (error) throw error;
+  const rows = (data || []) as { source: string | null; channel: string | null; conversions: number; sessions: number }[];
+  let total = 0;
+  let totalSessions = 0;
+  const bySrc = new Map<string, { conversions: number; sessions: number }>();
+  for (const r of rows) {
+    total += r.conversions || 0;
+    totalSessions += r.sessions || 0;
+    const label = r.source || r.channel || "לא ידוע";
+    const cur = bySrc.get(label) || { conversions: 0, sessions: 0 };
+    cur.conversions += r.conversions || 0;
+    cur.sessions += r.sessions || 0;
+    bySrc.set(label, cur);
+  }
+  const by_source = [...bySrc.entries()]
+    .map(([label, v]) => ({ label, ...v }))
+    .sort((a, b) => b.conversions - a.conversions)
+    .slice(0, 6);
+  return { total, total_sessions: totalSessions, by_source };
+}
+
+// GA4 daily totals for charts (organic only — server-side filtered already)
+export async function ga4Daily(clientId: number, from?: string, to?: string): Promise<{ date: string; sessions: number; users: number }[]> {
+  let q = supabase
     .from("ga4_metrics")
     .select("date, sessions, total_users")
     .eq("client_id", clientId);
+  if (from) q = q.gte("date", from);
+  if (to) q = q.lte("date", to);
+  const { data, error } = await q;
   if (error) throw error;
   // Aggregate client-side per date
   const agg = new Map<string, { sessions: number; users: number }>();
@@ -275,6 +383,106 @@ export async function zefoRankBuckets(clientId: number): Promise<RankBuckets | n
   return data;
 }
 
+// ===== Tasks =====
+export async function listTasks(clientId: number): Promise<Task[]> {
+  const { data, error } = await supabase
+    .from("tasks")
+    .select("*")
+    .eq("client_id", clientId)
+    .order("status", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function createTask(
+  clientId: number,
+  title: string,
+  details?: string | null,
+  priority?: Task["priority"],
+): Promise<Task> {
+  const { data, error } = await supabase
+    .from("tasks")
+    .insert({ client_id: clientId, title, details: details ?? null, priority: priority ?? null, source: "manual", status: "open" })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function setTaskDone(id: number, done: boolean): Promise<void> {
+  const { error } = await supabase
+    .from("tasks")
+    .update({ status: done ? "done" : "open", done_at: done ? new Date().toISOString() : null })
+    .eq("id", id);
+  if (error) throw error;
+}
+
+export async function deleteTask(id: number): Promise<void> {
+  const { error } = await supabase.from("tasks").delete().eq("id", id);
+  if (error) throw error;
+}
+
+export async function bulkCreateTasks(clientId: number, titles: string[]): Promise<number> {
+  if (titles.length === 0) return 0;
+  const rows = titles.map((title) => ({ client_id: clientId, title, source: "upload", status: "open" }));
+  const { data, error } = await supabase.from("tasks").insert(rows).select("id");
+  if (error) throw error;
+  return data?.length || 0;
+}
+
+export async function suggestTasks(clientId: number): Promise<{ created: number; tasks: Task[] }> {
+  return await invokeFn("tasks-suggest", { client_id: clientId });
+}
+
+// ===== Suggestions (הצעות ייעול) — a single shared board across the whole team =====
+export async function listSuggestions(): Promise<Suggestion[]> {
+  const { data, error } = await supabase
+    .from("suggestions")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function createSuggestion(
+  author: "moshe" | "mordechai",
+  body: string | null,
+  files: File[],
+): Promise<Suggestion> {
+  const attachments: SuggestionAttachment[] = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const path = `global/${Date.now()}_${i}_${file.name.replace(/[^\w.\-]+/g, "_")}`;
+    const { error: upErr } = await supabase.storage.from("suggestions").upload(path, file);
+    if (upErr) throw upErr;
+    attachments.push({ name: file.name, path, type: file.type, size: file.size });
+  }
+  const trimmed = (body ?? "").trim();
+  const { data, error } = await supabase
+    .from("suggestions")
+    .insert({ author, body: trimmed || null, attachments })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteSuggestion(s: Suggestion): Promise<void> {
+  if (s.attachments && s.attachments.length > 0) {
+    await supabase.storage.from("suggestions").remove(s.attachments.map((a) => a.path));
+  }
+  const { error } = await supabase.from("suggestions").delete().eq("id", s.id);
+  if (error) throw error;
+}
+
+export async function suggestionFileUrl(path: string): Promise<string> {
+  const { data, error } = await supabase.storage.from("suggestions").createSignedUrl(path, 3600);
+  if (error) throw error;
+  return data.signedUrl;
+}
+
 // ===== Dashboard KPIs =====
 export interface DashboardData {
   client: Client;
@@ -288,10 +496,16 @@ export interface DashboardData {
   };
   top_keywords: { id: number; term: string; monthly_searches: number; competition: string | null }[];
   top_pages: { url: string; clicks: number }[];
+  top_zefo_keywords: { zefo_keyword_id: number; keyword: string; ranking: number | null; previous_ranking: number | null }[];
+  conversions: {
+    total: number;
+    total_sessions: number;
+    by_source: { label: string; conversions: number; sessions: number }[];
+  };
 }
 
 export async function getDashboard(clientId: number): Promise<DashboardData> {
-  const [{ data: client }, { data: stats }, { data: topKw }, { data: gscRows }] = await Promise.all([
+  const [{ data: client }, { data: stats }, { data: topKw }, { data: gscRows }, { data: zefoRows }, { data: convRows }] = await Promise.all([
     supabase.from("clients").select("*").eq("id", clientId).maybeSingle(),
     supabase.from("client_stats").select("*").eq("client_id", clientId).maybeSingle(),
     supabase
@@ -305,6 +519,16 @@ export async function getDashboard(clientId: number): Promise<DashboardData> {
       .select("page, clicks")
       .eq("client_id", clientId)
       .not("page", "is", null),
+    supabase
+      .from("zefo_keywords")
+      .select("zefo_keyword_id, keyword, ranking, previous_ranking")
+      .eq("client_id", clientId)
+      .order("ranking", { ascending: true, nullsFirst: false })
+      .limit(10),
+    supabase
+      .from("ga4_conversions")
+      .select("channel, source, conversions, sessions")
+      .eq("client_id", clientId),
   ]);
 
   // Aggregate top pages client-side
@@ -314,6 +538,23 @@ export async function getDashboard(clientId: number): Promise<DashboardData> {
     .map(([url, clicks]) => ({ url, clicks }))
     .sort((a, b) => b.clicks - a.clicks)
     .slice(0, 10);
+
+  // Aggregate conversions by source client-side
+  const conv = (convRows || []) as Ga4ConversionRow[];
+  const total = conv.reduce((s, r) => s + (r.conversions || 0), 0);
+  const totalSessions = conv.reduce((s, r) => s + (r.sessions || 0), 0);
+  const bySrc = new Map<string, { conversions: number; sessions: number }>();
+  for (const r of conv) {
+    const label = r.source || r.channel || "לא ידוע";
+    const cur = bySrc.get(label) || { conversions: 0, sessions: 0 };
+    cur.conversions += r.conversions || 0;
+    cur.sessions += r.sessions || 0;
+    bySrc.set(label, cur);
+  }
+  const bySource = [...bySrc.entries()]
+    .map(([label, v]) => ({ label, ...v }))
+    .sort((a, b) => b.conversions - a.conversions)
+    .slice(0, 6);
 
   return {
     client: client as Client,
@@ -327,5 +568,11 @@ export async function getDashboard(clientId: number): Promise<DashboardData> {
     },
     top_keywords: topKw || [],
     top_pages: topPages,
+    top_zefo_keywords: zefoRows || [],
+    conversions: {
+      total,
+      total_sessions: totalSessions,
+      by_source: bySource,
+    },
   };
 }

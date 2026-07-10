@@ -51,3 +51,6 @@ verify_jwt = true
 
 [functions.ga4-traffic]
 verify_jwt = true
+
+[functions.tasks-suggest]
+verify_jwt = true

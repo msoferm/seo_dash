@@ -1,5 +1,5 @@
 import { Routes, Route, NavLink, useParams, Link } from "react-router-dom";
-import { Users, BarChart3, Search, MessageSquare, HelpCircle, Home, LogOut, Target } from "lucide-react";
+import { Users, BarChart3, Search, MessageSquare, HelpCircle, Home, LogOut, Target, ClipboardList, Lightbulb } from "lucide-react";
 import { useAuth } from "./AuthContext";
 import ClientsPage from "./pages/ClientsPage";
 import ClientDashboard from "./pages/ClientDashboard";
@@ -7,6 +7,8 @@ import KeywordsPage from "./pages/KeywordsPage";
 import FaqGeneratorPage from "./pages/FaqGeneratorPage";
 import ClaudeChatPage from "./pages/ClaudeChatPage";
 import RankingsPage from "./pages/RankingsPage";
+import TasksPage from "./pages/TasksPage";
+import SuggestionsPage from "./pages/SuggestionsPage";
 import LoginPage from "./pages/LoginPage";
 import NotMemberPage from "./pages/NotMemberPage";
 import Spinner from "./components/Spinner";
@@ -23,6 +25,9 @@ function Sidebar() {
       <Link to="/" className="text-xl font-bold text-brand-700 mb-4 px-3">דאשבורד SEO</Link>
       <NavLink to="/" end className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
         <Home size={18} /> כל הלקוחות
+      </NavLink>
+      <NavLink to="/suggestions" className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
+        <Lightbulb size={18} /> הצעות ייעול
       </NavLink>
       {cid && (
         <>
@@ -41,6 +46,9 @@ function Sidebar() {
           </NavLink>
           <NavLink to={`/clients/${cid}/chat`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
             <MessageSquare size={18} /> צ׳אט עם קלוד
+          </NavLink>
+          <NavLink to={`/clients/${cid}/tasks`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
+            <ClipboardList size={18} /> לוח משימות
           </NavLink>
         </>
       )}
@@ -77,11 +85,13 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Layout><ClientsPage /></Layout>} />
+      <Route path="/suggestions" element={<Layout><SuggestionsPage /></Layout>} />
       <Route path="/clients/:clientId" element={<Layout><ClientDashboard /></Layout>} />
       <Route path="/clients/:clientId/keywords" element={<Layout><KeywordsPage /></Layout>} />
       <Route path="/clients/:clientId/rankings" element={<Layout><RankingsPage /></Layout>} />
       <Route path="/clients/:clientId/faq" element={<Layout><FaqGeneratorPage /></Layout>} />
       <Route path="/clients/:clientId/chat" element={<Layout><ClaudeChatPage /></Layout>} />
+      <Route path="/clients/:clientId/tasks" element={<Layout><TasksPage /></Layout>} />
     </Routes>
   );
 }

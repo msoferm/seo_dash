@@ -3,10 +3,10 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import * as api from "../api";
 import Spinner from "./Spinner";
 
-export default function Ga4TrafficChart({ clientId }: { clientId: number }) {
+export default function Ga4TrafficChart({ clientId, from, to }: { clientId: number; from?: string; to?: string }) {
   const { data, isLoading } = useQuery({
-    queryKey: ["ga4-daily", clientId],
-    queryFn: () => api.ga4Daily(clientId),
+    queryKey: ["ga4-daily", clientId, from, to],
+    queryFn: () => api.ga4Daily(clientId, from, to),
   });
   if (isLoading) return <Spinner />;
   if (!data || data.length === 0) return <p className="text-slate-500 text-sm">אין נתוני GA4. ודא ש-GA4 Property ID מוגדר בלקוח ולחץ "סנכרן GA4".</p>;

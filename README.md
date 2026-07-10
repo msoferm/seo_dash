@@ -57,7 +57,10 @@ supabase secrets set GOOGLE_CLIENT_SECRET=...
 supabase secrets set GOOGLE_OAUTH_REDIRECT_URI=https://YOUR-PROJECT-REF.supabase.co/functions/v1/gsc-callback
 supabase secrets set FRONTEND_URL=https://YOUR-FIREBASE-APP.web.app
 supabase secrets set CLAUDE_MODEL=claude-sonnet-4-6
+supabase secrets set ZEFO_API_KEY=...   # למעקב מיקומים ב-ZEFO
 ```
+
+> מפתח Anthropic מוגדר **רק** כאן כסוד ב-Supabase — אין שדה להזנת המפתח בתוך האפליקציה. בלי הסוד הזה הצ'אט ומחולל ה-FAQ לא יעבדו.
 
 ### 3. Google Cloud (לחיבור GSC/GA4)
 
@@ -105,27 +108,15 @@ npm install
 
 ### לפרוס Edge Functions ל-Supabase:
 
+פרוס את **כל** הפונקציות בפקודה אחת, ואז שוב את `gsc-callback` (Google קורא אליו ישירות, לכן צריך `--no-verify-jwt`):
+
 ```bash
 cd "dashboard - seo"
-supabase functions deploy claude-chat
-supabase functions deploy faq-generate
-supabase functions deploy faq-refine
-supabase functions deploy faq-suggest
-supabase functions deploy crawl-site
-supabase functions deploy fetch-page
-supabase functions deploy upload-keywords
-supabase functions deploy gsc-authorize
-supabase functions deploy gsc-callback --no-verify-jwt
-supabase functions deploy gsc-sync
-supabase functions deploy ga4-traffic
-```
-
-או פקודה אחת לכל:
-```bash
 supabase functions deploy
+supabase functions deploy gsc-callback --no-verify-jwt
 ```
 
-(הערה: `gsc-callback` חייב `--no-verify-jwt` כי Google הוא שמתקשר אליו)
+`supabase functions deploy` פורסת את כל הפונקציות שבתיקייה `supabase/functions` — כולל ZEFO (`zefo-list-sites`, `zefo-link-site`, `zefo-sync`), GA4 (`ga4-list-properties`, `ga4-sync`, `ga4-traffic`), ו-`gsc-list-sites` / `clients-bulk-import-gsc`. אם פורסים ידנית פונקציה-פונקציה — אסור לשכוח אף אחת, אחרת אותה תכונה לא תעבוד.
 
 ### לבנות ולפרוס את ה-Frontend ל-Firebase Hosting:
 

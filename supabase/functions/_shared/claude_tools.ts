@@ -51,6 +51,25 @@ export const SEO_TOOLS: ToolDefinition[] = [
       properties: { limit: { type: "integer", default: 50 } },
     },
   },
+  {
+    name: "get_analytics_traffic",
+    description: "מחזיר נתוני Google Analytics 4 (תנועה אורגנית): סשנים, משתמשים, סשנים מעורבים, והמרות, עבור X הימים האחרונים.",
+    input_schema: {
+      type: "object",
+      properties: { days: { type: "integer", default: 30 } },
+    },
+  },
+  {
+    name: "get_traffic_sources",
+    description: "מחזיר את מקורות התנועה וההמרות מ-Google Analytics 4 (כל הערוצים) - לכל מקור: כמות ההמרות והסשנים. שימושי לשאלות 'מאיפה מגיעות ההמרות / התנועה'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        limit: { type: "integer", default: 10 },
+        days: { type: "integer", default: 30 },
+      },
+    },
+  },
 ];
 
 export async function runTool(
@@ -65,6 +84,8 @@ export async function runTool(
     case "get_top_keywords": return getTopKeywords(sb, clientId, args.limit || 10, args.sort_by || "searches");
     case "get_page_performance": return getPagePerformance(sb, clientId, args.url || "", args.days || 30);
     case "list_pages": return listPages(sb, clientId, args.limit || 50);
+    case "get_analytics_traffic": return getAnalyticsTraffic(sb, clientId, args.days || 30);
+    case "get_traffic_sources": return getTrafficSources(sb, clientId, args.limit || 10, args.days || 30);
     default: return { error: `כלי לא ידוע: ${name}` };
   }
 }
@@ -169,4 +190,54 @@ async function listPages(sb: SupabaseClient, clientId: number, limit: number) {
     .eq("client_id", clientId)
     .limit(limit);
   return { count: data?.length || 0, pages: data || [] };
+}
+
+function ymdDaysAgo(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+async function getAnalyticsTraffic(sb: SupabaseClient, clientId: number, days: number) {
+  const cutoff = ymdDaysAgo(days);
+  const { data } = await sb
+    .from("ga4_metrics")
+    .select("sessions, total_users, engaged_sessions, conversions")
+    .eq("client_id", clientId)
+    .gte("date", cutoff);
+  if (!data || data.length === 0) {
+    return { found: false, message: "אין נתוני Google Analytics 4 ללקוח בטווח הזה. צריך לחבר GA4 ולסנכרן." };
+  }
+  const sessions = data.reduce((s, r) => s + (r.sessions || 0), 0);
+  const users = data.reduce((s, r) => s + (r.total_users || 0), 0);
+  const engaged = data.reduce((s, r) => s + (r.engaged_sessions || 0), 0);
+  const conversions = data.reduce((s, r) => s + (Number(r.conversions) || 0), 0);
+  return { found: true, days, sessions, users, engaged_sessions: engaged, conversions, note: "תנועה אורגנית בלבד" };
+}
+
+async function getTrafficSources(sb: SupabaseClient, clientId: number, limit: number, days: number) {
+  const cutoff = ymdDaysAgo(days);
+  const { data } = await sb
+    .from("ga4_conversions")
+    .select("source, channel, conversions, sessions, date")
+    .eq("client_id", clientId);
+  if (!data || data.length === 0) {
+    return { found: false, message: "אין נתוני המרות מ-GA4. צריך לחבר Google Analytics 4 ולסנכרן." };
+  }
+  // include rows in range, plus undated legacy rows
+  const inRange = data.filter((r: any) => !r.date || r.date >= cutoff);
+  const agg = new Map<string, { conversions: number; sessions: number }>();
+  for (const r of inRange) {
+    const key = (r as any).source || (r as any).channel || "(ישיר)";
+    const cur = agg.get(key) || { conversions: 0, sessions: 0 };
+    cur.conversions += Number((r as any).conversions) || 0;
+    cur.sessions += (r as any).sessions || 0;
+    agg.set(key, cur);
+  }
+  const sources = [...agg.entries()]
+    .map(([source, v]) => ({ source, conversions: Math.round(v.conversions * 100) / 100, sessions: v.sessions }))
+    .sort((a, b) => b.conversions - a.conversions)
+    .slice(0, limit);
+  const total = Math.round(sources.reduce((s, x) => s + x.conversions, 0) * 100) / 100;
+  return { found: true, days, total_conversions: total, sources };
 }

@@ -3,10 +3,10 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import * as api from "../api";
 import Spinner from "./Spinner";
 
-export default function OrganicTrafficChart({ clientId }: { clientId: number }) {
+export default function OrganicTrafficChart({ clientId, from, to }: { clientId: number; from?: string; to?: string }) {
   const { data, isLoading } = useQuery({
-    queryKey: ["gsc-daily", clientId],
-    queryFn: () => api.gscDaily(clientId),
+    queryKey: ["gsc-daily", clientId, from, to],
+    queryFn: () => api.gscDaily(clientId, from, to),
   });
   if (isLoading) return <Spinner />;
   if (!data || data.length === 0) return <p className="text-slate-500 text-sm">אין נתוני GSC. לחץ "סנכרן GSC" בראש הדף.</p>;

@@ -65,29 +65,30 @@ npx supabase link --project-ref dnweyiopirzwnbrqdhmg
 npx supabase secrets set ANTHROPIC_API_KEY=sk-ant-YOUR_KEY_HERE
 npx supabase secrets set FRONTEND_URL=https://seo-dash-48312.web.app
 npx supabase secrets set CLAUDE_MODEL=claude-sonnet-4-6
+# למעקב מיקומים ב-ZEFO (חובה כדי שמשיכת המיקומים תעבוד):
+npx supabase secrets set ZEFO_API_KEY=YOUR_ZEFO_API_KEY
 # אם יש Google OAuth:
 npx supabase secrets set GOOGLE_CLIENT_ID=YOUR_CLIENT_ID
 npx supabase secrets set GOOGLE_CLIENT_SECRET=YOUR_CLIENT_SECRET
 npx supabase secrets set GOOGLE_OAUTH_REDIRECT_URI=https://dnweyiopirzwnbrqdhmg.supabase.co/functions/v1/gsc-callback
 ```
 
+> ⚠️ **חשוב:** את מפתח Anthropic *לא* מזינים בתוך האפליקציה — אין שם שדה כזה. הוא חייב להיות מוגדר כאן כסוד (secret) ב-Supabase, אחרת הצ'אט ומחולל ה-FAQ לא יעבדו.
+
 ## שלב 7 — לפרוס את ה-Edge Functions (~3 דקות)
 
+**הדרך הפשוטה — פורסים את הכל בפקודה אחת, ואז שוב את gsc-callback:**
+
 ```powershell
-npx supabase functions deploy claude-chat
-npx supabase functions deploy faq-generate
-npx supabase functions deploy faq-refine
-npx supabase functions deploy faq-suggest
-npx supabase functions deploy crawl-site
-npx supabase functions deploy fetch-page
-npx supabase functions deploy upload-keywords
-npx supabase functions deploy gsc-authorize
+npx supabase functions deploy
 npx supabase functions deploy gsc-callback --no-verify-jwt
-npx supabase functions deploy gsc-sync
-npx supabase functions deploy ga4-traffic
 ```
 
-(אפשר גם הכל בפקודה אחת: `npx supabase functions deploy`, אבל אז gsc-callback יהיה עם verify_jwt — צריך להפעיל אותה שוב עם `--no-verify-jwt`.)
+`npx supabase functions deploy` פורס את **כל** הפונקציות בתיקייה `supabase/functions`, כולל אלה של ZEFO ו-GA4. חשוב — אם פורסים ידנית פונקציה-פונקציה, אסור לשכוח אף אחת, אחרת אותה תכונה פשוט לא תעבוד. הרשימה המלאה כיום:
+
+`claude-chat`, `faq-generate`, `faq-refine`, `faq-suggest`, `crawl-site`, `fetch-page`, `upload-keywords`, `gsc-authorize`, `gsc-callback` (עם `--no-verify-jwt`), `gsc-sync`, `gsc-list-sites`, `ga4-traffic`, `ga4-sync`, `ga4-list-properties`, `clients-bulk-import-gsc`, `zefo-list-sites`, `zefo-link-site`, `zefo-sync`.
+
+> 💡 **קיצור:** אפשר פשוט להריץ את הסקריפט `setup-and-deploy.ps1` שבשורש הפרויקט — הוא עושה את שלבים 5–7 (login, link, secrets, deploy) אוטומטית.
 
 ## שלב 8 — בנייה ופריסה של ה-Frontend ל-Firebase (~3 דקות)
 
