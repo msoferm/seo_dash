@@ -4,6 +4,9 @@ frontend/dist/
 frontend/.env.local
 frontend/.env
 
+# Build artifacts
+frontend/*.tsbuildinfo
+
 # Supabase
 supabase/.temp/
 supabase/.branches/
