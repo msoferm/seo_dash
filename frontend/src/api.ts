@@ -576,3 +576,116 @@ export async function getDashboard(clientId: number): Promise<DashboardData> {
     },
   };
 }
+
+// ===== Reports (דוח קידום חודשי) =====
+export interface ReportLink {
+  id: number;
+  client_id: number;
+  link_type: string;
+  url: string;
+  notes: string | null;
+  done_on: string;
+  created_at: string;
+}
+
+export interface Report {
+  id: number;
+  client_id: number;
+  title: string | null;
+  period_from: string;
+  period_to: string;
+  summary_text: string | null;
+  recommendations_text: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// --- Manual link-building log ---
+export async function listReportLinks(clientId: number, from?: string, to?: string): Promise<ReportLink[]> {
+  let q = supabase.from("report_links").select("*").eq("client_id", clientId).order("done_on", { ascending: false });
+  if (from) q = q.gte("done_on", from);
+  if (to) q = q.lte("done_on", to);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data || [];
+}
+
+export async function createReportLink(
+  clientId: number,
+  link: { link_type: string; url: string; notes?: string | null; done_on?: string },
+): Promise<ReportLink> {
+  const { data, error } = await supabase
+    .from("report_links")
+    .insert({ client_id: clientId, link_type: link.link_type, url: link.url, notes: link.notes || null, done_on: link.done_on || undefined })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+/** Bulk add pasted links. Each item is "type<TAB or comma>url" or just a url. */
+export async function bulkCreateReportLinks(
+  clientId: number,
+  rows: { link_type: string; url: string; done_on?: string }[],
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  const payload = rows.map((r) => ({ client_id: clientId, link_type: r.link_type, url: r.url, done_on: r.done_on || undefined }));
+  const { data, error } = await supabase.from("report_links").insert(payload).select("id");
+  if (error) throw error;
+  return (data || []).length;
+}
+
+export async function deleteReportLink(id: number): Promise<void> {
+  const { error } = await supabase.from("report_links").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// --- Saved reports ---
+export async function listReports(clientId: number): Promise<Report[]> {
+  const { data, error } = await supabase
+    .from("reports")
+    .select("*")
+    .eq("client_id", clientId)
+    .order("period_to", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function getReport(id: number): Promise<Report | null> {
+  const { data, error } = await supabase.from("reports").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function createReport(body: {
+  client_id: number;
+  title?: string | null;
+  period_from: string;
+  period_to: string;
+  summary_text?: string | null;
+  recommendations_text?: string | null;
+}): Promise<Report> {
+  const { data, error } = await supabase.from("reports").insert(body).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateReport(id: number, body: Partial<Report>): Promise<Report> {
+  const { data, error } = await supabase.from("reports").update(body).eq("id", id).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteReport(id: number): Promise<void> {
+  const { error } = await supabase.from("reports").delete().eq("id", id);
+  if (error) throw error;
+}
+
+/** Ask Claude to draft the narrative (summary + recommendations) for a period. */
+export async function generateReportNarrative(
+  clientId: number,
+  from: string,
+  to: string,
+): Promise<{ summary: string; recommendations: string }> {
+  return await invokeFn("report-generate", { client_id: clientId, from, to });
+}

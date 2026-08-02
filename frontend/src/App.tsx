@@ -1,5 +1,5 @@
 import { Routes, Route, NavLink, useParams, Link } from "react-router-dom";
-import { Users, BarChart3, Search, MessageSquare, HelpCircle, Home, LogOut, Target, ClipboardList, Lightbulb } from "lucide-react";
+import { Users, BarChart3, Search, MessageSquare, HelpCircle, Home, LogOut, Target, ClipboardList, Lightbulb, FileText } from "lucide-react";
 import { useAuth } from "./AuthContext";
 import ClientsPage from "./pages/ClientsPage";
 import ClientDashboard from "./pages/ClientDashboard";
@@ -7,6 +7,8 @@ import KeywordsPage from "./pages/KeywordsPage";
 import FaqGeneratorPage from "./pages/FaqGeneratorPage";
 import ClaudeChatPage from "./pages/ClaudeChatPage";
 import RankingsPage from "./pages/RankingsPage";
+import ReportsPage from "./pages/ReportsPage";
+import ReportView from "./pages/ReportView";
 import TasksPage from "./pages/TasksPage";
 import SuggestionsPage from "./pages/SuggestionsPage";
 import LoginPage from "./pages/LoginPage";
@@ -50,6 +52,9 @@ function Sidebar() {
           <NavLink to={`/clients/${cid}/tasks`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
             <ClipboardList size={18} /> לוח משימות
           </NavLink>
+          <NavLink to={`/clients/${cid}/reports`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
+            <FileText size={18} /> דוחות קידום
+          </NavLink>
         </>
       )}
       <div className="mt-auto pt-4 border-t border-slate-100 text-xs text-slate-500">
@@ -92,6 +97,8 @@ export default function App() {
       <Route path="/clients/:clientId/faq" element={<Layout><FaqGeneratorPage /></Layout>} />
       <Route path="/clients/:clientId/chat" element={<Layout><ClaudeChatPage /></Layout>} />
       <Route path="/clients/:clientId/tasks" element={<Layout><TasksPage /></Layout>} />
+      <Route path="/clients/:clientId/reports" element={<Layout><ReportsPage /></Layout>} />
+      <Route path="/clients/:clientId/reports/:reportId" element={<Layout><ReportView /></Layout>} />
     </Routes>
   );
 }

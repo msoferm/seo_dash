@@ -38,3 +38,37 @@ button {
     @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium;
   }
 }
+
+/* ===== Print: show only the report sheet, full width ===== */
+@media print {
+  aside,
+  .no-print {
+    display: none !important;
+  }
+  html,
+  body,
+  #root {
+    height: auto;
+    background: #fff;
+  }
+  main {
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+  .report-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  .report-sheet section {
+    break-inside: avoid;
+  }
+  table {
+    break-inside: auto;
+  }
+  tr {
+    break-inside: avoid;
+  }
+}
