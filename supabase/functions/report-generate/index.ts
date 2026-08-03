@@ -15,9 +15,10 @@ Deno.serve(async (req) => {
   if (cors) return cors;
   try {
     const { sb } = await requireTeamMember(req);
-    const { client_id, from, to } = await req.json();
+    const { client_id, from, to, instructions, current_summary, current_recommendations } = await req.json();
     if (!client_id) return errorResponse("חסר client_id", 400);
     if (!from || !to) return errorResponse("חסר טווח תאריכים", 400);
+    const hasInstructions = typeof instructions === "string" && instructions.trim().length > 0;
 
     const { data: client } = await sb.from("clients").select("*").eq("id", client_id).maybeSingle();
     if (!client) return errorResponse("לקוח לא נמצא", 404);
@@ -82,18 +83,32 @@ ${fmt([...linkTypes.entries()], ([t, c]) => `- ${t}: ${c}`)}
 מילות מפתח מרכזיות לפי נפח חיפוש:
 ${fmt(kw, (k) => `- ${k.term} (${k.monthly_searches})`)}`;
 
-    const system =
+    let system =
       "אתה מנהל קידום אורגני (SEO) מקצועי שכותב דוח חודשי ללקוח. בהינתן נתוני הלקוח לתקופה, כתוב שני חלקים בעברית, בגוף שלישי/ראשון-רבים ובטון מקצועי וברור, ללא סימני מרקדאון: " +
       "1) 'summary' — סיכום פעילות החודש: מה בוצע (קישורים חיצוניים, תוכן/מאמרים, אופטימיזציה, שיפור מיקומים והמרות), עם התייחסות למספרים האמיתיים שקיבלת. 2-4 פסקאות קצרות. " +
       "2) 'recommendations' — המלצות להמשך: צעדים קונקרטיים לחודש הבא (מילים לחיזוק, תוכן, קישורים, שאלות ותשובות). 3-6 המלצות. " +
       "החזר אך ורק JSON תקין: {\"summary\":\"...\",\"recommendations\":\"...\"}. " +
       "אל תמציא נתונים שאינם בקלט; אם אין נתונים לתחום מסוים, אל תתייחס אליו כאילו יש.";
 
+    let userContent = context;
+    if (hasInstructions) {
+      system +=
+        " חשוב: קיים כבר טקסט דוח, והמשתמש נותן הוראות מדויקות מה לתקן או לשנות בו. " +
+        "בצע את ההוראות של המשתמש במדויק (קיצור, הרחבה, שינוי טון, הסרת/הוספת נושא, תיקון עובדה וכו'), " +
+        "אך המשך לשמור על דיוק מוחלט לנתונים שסופקו — אל תמציא. החזר את שני החלקים המעודכנים במלואם.";
+      userContent +=
+        `\n\n--- הטקסט הנוכחי של הדוח ---\n` +
+        `סיכום פעילות:\n${current_summary || "(ריק)"}\n\n` +
+        `המלצות להמשך:\n${current_recommendations || "(ריק)"}\n\n` +
+        `--- הוראות המשתמש לתיקון ---\n${instructions.trim()}\n\n` +
+        `החזר את הטקסט המעודכן באותו מבנה JSON.`;
+    }
+
     const resp = await callClaude({
       model: DEFAULT_MODEL,
       max_tokens: 2000,
       system,
-      messages: [{ role: "user", content: context }],
+      messages: [{ role: "user", content: userContent }],
     });
 
     const raw = resp.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");

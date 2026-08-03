@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight, Printer, Save, Sparkles, Loader2, MousePointerClick,
-  Eye, Target, TrendingUp, ArrowUp, ArrowDown, Minus,
+  Eye, Target, TrendingUp, ArrowUp, ArrowDown, Minus, Wand2, X,
 } from "lucide-react";
 import * as api from "../api";
 import Spinner from "../components/Spinner";
@@ -45,6 +45,8 @@ export default function ReportView() {
   const [editing, setEditing] = useState(false);
   const [summary, setSummary] = useState("");
   const [recs, setRecs] = useState("");
+  const [refineOpen, setRefineOpen] = useState(false);
+  const [instructions, setInstructions] = useState("");
 
   useEffect(() => {
     if (report) {
@@ -61,12 +63,20 @@ export default function ReportView() {
     },
   });
 
+  // Refine (with instructions) or rewrite from scratch (instructions omitted).
   const regen = useMutation({
-    mutationFn: () => api.generateReportNarrative(cid, from!, to!),
+    mutationFn: (opts?: { instructions?: string }) =>
+      api.generateReportNarrative(cid, from!, to!, {
+        instructions: opts?.instructions,
+        current_summary: summary,
+        current_recommendations: recs,
+      }),
     onSuccess: (draft) => {
       setSummary(draft.summary);
       setRecs(draft.recommendations);
       setEditing(true);
+      setRefineOpen(false);
+      setInstructions("");
     },
   });
 
@@ -83,8 +93,8 @@ export default function ReportView() {
           <ArrowRight size={18} /> חזרה
         </button>
         <div className="flex-1" />
-        <button className="btn-secondary" onClick={() => regen.mutate()} disabled={regen.isPending}>
-          {regen.isPending ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />} נסח מחדש (קלוד)
+        <button className="btn-secondary" onClick={() => setRefineOpen(true)} disabled={regen.isPending}>
+          {regen.isPending ? <Loader2 size={18} className="animate-spin" /> : <Wand2 size={18} />} תקן עם קלוד
         </button>
         {editing ? (
           <button className="btn-primary" onClick={() => save.mutate()} disabled={save.isPending}>
@@ -99,8 +109,6 @@ export default function ReportView() {
           <Printer size={18} /> הדפס / PDF
         </button>
       </div>
-
-      {regen.isError && <div className="no-print text-sm text-rose-600 mb-3">שגיאה בניסוח מחדש: {(regen.error as any)?.message}</div>}
 
       {/* ===== The printable report ===== */}
       <div className="report-sheet bg-white border border-slate-200 rounded-xl shadow-sm p-8 max-w-4xl mx-auto">
@@ -247,6 +255,80 @@ export default function ReportView() {
           )}
         </section>
       </div>
+
+      {/* Refine-with-instructions dialog */}
+      {refineOpen && (
+        <div
+          className="no-print fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => !regen.isPending && setRefineOpen(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Wand2 size={20} className="text-brand-600" /> תקן את הדוח עם קלוד
+              </h3>
+              <button className="text-slate-400 hover:text-slate-700 p-1" onClick={() => setRefineOpen(false)} disabled={regen.isPending}>
+                <X size={20} />
+              </button>
+            </div>
+            <p className="text-sm text-slate-500 mb-3">
+              כתוב מה תרצה שקלוד יתקן או ישנה. הוא ישכתב את הטקסט הקיים לפי ההוראות שלך — תוך שמירה על הנתונים האמיתיים.
+            </p>
+
+            <textarea
+              className="input"
+              rows={5}
+              autoFocus
+              placeholder={"לדוגמה:\n· קצר את הסיכום לשתי פסקאות\n· אל תזכיר המרות, אין עדיין מספיק נתונים\n· הדגש את השיפור במיקומים של \"סיורים בעוטף עזה\"\n· טון יותר רשמי"}
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+            />
+
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {["קצר יותר", "יותר מפורט", "טון רשמי יותר", "בלי המרות", "הדגש שיפור מיקומים"].map((chip) => (
+                <button
+                  key={chip}
+                  type="button"
+                  className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  onClick={() => setInstructions((cur) => (cur ? cur + "\n· " + chip : "· " + chip))}
+                >
+                  + {chip}
+                </button>
+              ))}
+            </div>
+
+            {regen.isError && (
+              <div className="mt-3 bg-rose-50 border border-rose-200 rounded-lg p-2 text-sm text-rose-700">
+                {(regen.error as any)?.message}
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 mt-4">
+              <button
+                className="btn-primary"
+                onClick={() => regen.mutate({ instructions })}
+                disabled={regen.isPending || !instructions.trim()}
+              >
+                {regen.isPending ? <Loader2 size={18} className="animate-spin" /> : <Wand2 size={18} />} שלח לתיקון
+              </button>
+              <button
+                className="btn-secondary"
+                onClick={() => { if (confirm("לכתוב את הטקסט מחדש מאפס (בלי ההוראות)?")) regen.mutate(undefined); }}
+                disabled={regen.isPending}
+              >
+                <Sparkles size={18} /> כתוב מחדש מאפס
+              </button>
+              <div className="flex-1" />
+              <button className="btn-secondary" onClick={() => setRefineOpen(false)} disabled={regen.isPending}>
+                ביטול
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

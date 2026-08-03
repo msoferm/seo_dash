@@ -681,11 +681,22 @@ export async function deleteReport(id: number): Promise<void> {
   if (error) throw error;
 }
 
-/** Ask Claude to draft the narrative (summary + recommendations) for a period. */
+/**
+ * Ask Claude to draft the narrative for a period. Pass `opts.instructions` (plus the
+ * current text) to revise an existing draft instead of writing from scratch.
+ */
 export async function generateReportNarrative(
   clientId: number,
   from: string,
   to: string,
+  opts?: { instructions?: string; current_summary?: string; current_recommendations?: string },
 ): Promise<{ summary: string; recommendations: string }> {
-  return await invokeFn("report-generate", { client_id: clientId, from, to });
+  return await invokeFn("report-generate", {
+    client_id: clientId,
+    from,
+    to,
+    instructions: opts?.instructions,
+    current_summary: opts?.current_summary,
+    current_recommendations: opts?.current_recommendations,
+  });
 }
