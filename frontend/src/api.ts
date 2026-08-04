@@ -495,6 +495,11 @@ export async function addSuggestionComment(
   return data;
 }
 
+export async function updateSuggestionComment(id: number, body: string): Promise<void> {
+  const { error } = await supabase.from("suggestion_comments").update({ body: body.trim() }).eq("id", id);
+  if (error) throw error;
+}
+
 export async function deleteSuggestionComment(id: number): Promise<void> {
   const { error } = await supabase.from("suggestion_comments").delete().eq("id", id);
   if (error) throw error;
