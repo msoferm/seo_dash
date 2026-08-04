@@ -75,13 +75,26 @@ export interface SuggestionAttachment {
   size: number;
 }
 
+export type SuggestionStatus = "open" | "in_progress" | "done";
+
+export interface SuggestionComment {
+  id: number;
+  suggestion_id: number;
+  author: "moshe" | "mordechai";
+  body: string;
+  created_at: string;
+}
+
 export interface Suggestion {
   id: number;
   client_id: number | null;
   author: "moshe" | "mordechai";
   body: string | null;
   attachments: SuggestionAttachment[];
+  status: SuggestionStatus;
+  done_at: string | null;
   created_at: string;
+  comments?: SuggestionComment[];
 }
 
 export interface Ga4ConversionRow {
@@ -440,10 +453,51 @@ export async function suggestTasks(clientId: number): Promise<{ created: number;
 export async function listSuggestions(): Promise<Suggestion[]> {
   const { data, error } = await supabase
     .from("suggestions")
-    .select("*")
+    .select("*, comments:suggestion_comments(id, suggestion_id, author, body, created_at)")
     .order("created_at", { ascending: false });
   if (error) throw error;
-  return data || [];
+  // Sort each suggestion's comments oldest-first for a natural thread order.
+  return (data || []).map((s: any) => ({
+    ...s,
+    comments: (s.comments || []).sort((a: SuggestionComment, b: SuggestionComment) =>
+      a.created_at.localeCompare(b.created_at),
+    ),
+  }));
+}
+
+/** Edit a suggestion's body text. */
+export async function updateSuggestion(id: number, body: string): Promise<void> {
+  const { error } = await supabase.from("suggestions").update({ body: body.trim() || null }).eq("id", id);
+  if (error) throw error;
+}
+
+/** Set workflow status (open / in_progress / done). Stamps done_at on 'done'. */
+export async function setSuggestionStatus(id: number, status: SuggestionStatus): Promise<void> {
+  const { error } = await supabase
+    .from("suggestions")
+    .update({ status, done_at: status === "done" ? new Date().toISOString() : null })
+    .eq("id", id);
+  if (error) throw error;
+}
+
+// --- Comments ---
+export async function addSuggestionComment(
+  suggestionId: number,
+  author: "moshe" | "mordechai",
+  body: string,
+): Promise<SuggestionComment> {
+  const { data, error } = await supabase
+    .from("suggestion_comments")
+    .insert({ suggestion_id: suggestionId, author, body: body.trim() })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteSuggestionComment(id: number): Promise<void> {
+  const { error } = await supabase.from("suggestion_comments").delete().eq("id", id);
+  if (error) throw error;
 }
 
 export async function createSuggestion(
