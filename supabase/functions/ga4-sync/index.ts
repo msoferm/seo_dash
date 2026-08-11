@@ -5,7 +5,7 @@
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
-import { getValidAccessToken } from "../_shared/google.ts";
+import { getValidAccessToken, resolveRange } from "../_shared/google.ts";
 
 async function runReport(accessToken: string, propertyId: string, body: any): Promise<any> {
   const r = await fetch(
@@ -20,14 +20,12 @@ async function runReport(accessToken: string, propertyId: string, body: any): Pr
   return await r.json();
 }
 
-function ymd(d: Date): string { return d.toISOString().slice(0, 10); }
-
 Deno.serve(async (req) => {
   const cors = handleCors(req);
   if (cors) return cors;
   try {
     const { sb } = await requireTeamMember(req);
-    const { client_id, days = 30 } = await req.json();
+    const { client_id, days = 30, from, to } = await req.json();
     const { data: client } = await sb.from("clients").select("*").eq("id", client_id).maybeSingle();
     if (!client) return errorResponse("לקוח לא נמצא", 404);
     if (!client.google_token_json) return errorResponse("הלקוח לא מחובר ל-Google", 400);
@@ -38,10 +36,7 @@ Deno.serve(async (req) => {
       await sb.from("clients").update({ google_token_json: updatedJson }).eq("id", client_id);
     }
 
-    const end = new Date();
-    const start = new Date();
-    start.setDate(end.getDate() - days);
-    const dateRange = { startDate: ymd(start), endDate: ymd(end) };
+    const dateRange = resolveRange(days, from, to);
 
     // Report 1: daily organic - by date + landing page
     const dailyByPage = await runReport(token, client.ga4_property_id, {
@@ -61,8 +56,8 @@ Deno.serve(async (req) => {
       limit: 50000,
     });
 
-    // Replace window
-    await sb.from("ga4_metrics").delete().eq("client_id", client_id);
+    // Replace only this date range (so syncing different periods accumulates)
+    await sb.from("ga4_metrics").delete().eq("client_id", client_id).gte("date", dateRange.startDate).lte("date", dateRange.endDate);
 
     const rows: any[] = [];
     for (const row of dailyByPage.rows || []) {
@@ -111,7 +106,7 @@ Deno.serve(async (req) => {
         limit: 50000,
       });
 
-      await sb.from("ga4_conversions").delete().eq("client_id", client_id);
+      await sb.from("ga4_conversions").delete().eq("client_id", client_id).gte("date", dateRange.startDate).lte("date", dateRange.endDate);
 
       const now = new Date().toISOString();
       const convRows = (bySource.rows || []).map((row: any) => {

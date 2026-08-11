@@ -54,6 +54,9 @@ export default function ReportsPage() {
 
   const create = useMutation({
     mutationFn: async () => {
+      // Pull fresh, accurate GSC + GA4 data for exactly this period first, so both the
+      // narrative and the report view reflect real current numbers (not a stale window).
+      await api.syncReportPeriod(cid, from, to);
       // Draft narrative with Claude (best-effort — a failure still creates an empty report).
       let summary = "";
       let recommendations = "";
@@ -113,7 +116,7 @@ export default function ReportsPage() {
             </div>
             <button className="btn-primary" onClick={() => create.mutate()} disabled={create.isPending}>
               {create.isPending ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
-              {create.isPending ? "קלוד כותב את הדוח..." : "צור דוח (קלוד מנסח)"}
+              {create.isPending ? "מסנכרן נתונים וכותב דוח..." : "צור דוח (קלוד מנסח)"}
             </button>
           </div>
           <p className="text-xs text-slate-400 mt-2">ברירת המחדל: החודש המלא האחרון. קלוד ינסח טיוטת סיכום והמלצות שתוכל לערוך בדוח עצמו.</p>

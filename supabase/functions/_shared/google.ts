@@ -82,16 +82,16 @@ export async function getValidAccessToken(tokenJson: string): Promise<{ token: s
   return { token: fresh.token, updatedJson: JSON.stringify(fresh) };
 }
 
-export async function gscQuery(accessToken: string, siteUrl: string, days: number): Promise<any[]> {
+/** Resolve a {from,to} window: explicit dates win, otherwise last `days` days. */
+export function resolveRange(days?: number, from?: string, to?: string): { startDate: string; endDate: string } {
+  if (from && to) return { startDate: from, endDate: to };
   const end = new Date();
   const start = new Date();
-  start.setDate(end.getDate() - days);
-  const body = {
-    startDate: start.toISOString().slice(0, 10),
-    endDate: end.toISOString().slice(0, 10),
-    dimensions: ["query", "page", "date"],
-    rowLimit: 1000,
-  };
+  start.setDate(end.getDate() - (days || 90));
+  return { startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) };
+}
+
+async function gscSearchAnalytics(accessToken: string, siteUrl: string, body: any): Promise<any[]> {
   const r = await fetch(
     `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
     {
@@ -102,15 +102,50 @@ export async function gscQuery(accessToken: string, siteUrl: string, days: numbe
   );
   if (!r.ok) throw new Error(`GSC API ${r.status}: ${await r.text()}`);
   const data = await r.json();
-  return (data.rows || []).map((row: any) => ({
-    term: row.keys[0],
-    page: row.keys[1],
-    date: row.keys[2],
-    clicks: row.clicks,
-    impressions: row.impressions,
-    ctr: row.ctr,
-    position: row.position,
+  return data.rows || [];
+}
+
+/**
+ * Authoritative daily totals for the range — dimensions=["date"] only, so no 1000-row
+ * cap and no anonymized-query undercount. One row per date.
+ */
+export async function gscDailyTotals(
+  accessToken: string, siteUrl: string, startDate: string, endDate: string,
+): Promise<{ date: string; clicks: number; impressions: number; position: number }[]> {
+  const rows = await gscSearchAnalytics(accessToken, siteUrl, {
+    startDate, endDate, dimensions: ["date"], rowLimit: 25000,
+  });
+  return rows.map((row: any) => ({
+    date: row.keys[0],
+    clicks: row.clicks || 0,
+    impressions: row.impressions || 0,
+    position: row.position || 0,
   }));
+}
+
+/**
+ * Query/page/date detail rows for the top-keywords & top-pages features.
+ * Paginated up to `maxRows` (GSC caps a single page at 25000). Used for breakdowns,
+ * NOT for click totals (use gscDailyTotals for accurate totals).
+ */
+export async function gscQuery(
+  accessToken: string, siteUrl: string, startDate: string, endDate: string, maxRows = 25000,
+): Promise<any[]> {
+  const out: any[] = [];
+  const pageSize = 25000;
+  for (let startRow = 0; startRow < maxRows; startRow += pageSize) {
+    const rows = await gscSearchAnalytics(accessToken, siteUrl, {
+      startDate, endDate, dimensions: ["query", "page", "date"], rowLimit: pageSize, startRow,
+    });
+    for (const row of rows) {
+      out.push({
+        term: row.keys[0], page: row.keys[1], date: row.keys[2],
+        clicks: row.clicks, impressions: row.impressions, ctr: row.ctr, position: row.position,
+      });
+    }
+    if (rows.length < pageSize) break; // last page
+  }
+  return out;
 }
 
 export async function ga4Report(accessToken: string, propertyId: string, days: number): Promise<any> {

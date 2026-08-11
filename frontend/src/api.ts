@@ -292,14 +292,14 @@ export async function listZefoKeywords(clientId: number, search?: string): Promi
   return data || [];
 }
 
-// Daily aggregated GSC for charts
+// Daily GSC totals for charts — from gsc_daily_totals (accurate date-only totals)
 export async function gscDaily(clientId: number, from?: string, to?: string): Promise<{ date: string; clicks: number; impressions: number; avg_position: number }[]> {
-  let q = supabase.from("gsc_daily").select("date, clicks, impressions, avg_position").eq("client_id", clientId).order("date");
+  let q = supabase.from("gsc_daily_totals").select("date, clicks, impressions, position").eq("client_id", clientId).order("date");
   if (from) q = q.gte("date", from);
   if (to) q = q.lte("date", to);
   const { data, error } = await q;
   if (error) throw error;
-  return data || [];
+  return (data || []).map((r: any) => ({ date: r.date, clicks: r.clicks, impressions: r.impressions, avg_position: r.position }));
 }
 
 // GSC KPI totals for a date range
@@ -311,8 +311,8 @@ export interface GscKpis {
 
 export async function getGscKpis(clientId: number, from: string, to: string): Promise<GscKpis> {
   const { data, error } = await supabase
-    .from("gsc_daily")
-    .select("date, clicks, impressions, avg_position")
+    .from("gsc_daily_totals")
+    .select("date, clicks, impressions, position")
     .eq("client_id", clientId)
     .gte("date", from)
     .lte("date", to);
@@ -326,8 +326,8 @@ export async function getGscKpis(clientId: number, from: string, to: string): Pr
   for (const r of rows) {
     clicks += r.clicks || 0;
     impressions += r.impressions || 0;
-    weightedPos += (r.avg_position || 0) * (r.impressions || 0);
-    posSum += r.avg_position || 0;
+    weightedPos += (r.position || 0) * (r.impressions || 0);
+    posSum += r.position || 0;
   }
   const avg_position = impressions > 0 ? weightedPos / impressions : posSum / rows.length;
   return { clicks, impressions, avg_position: Math.round(avg_position * 10) / 10 };
@@ -335,9 +335,14 @@ export async function getGscKpis(clientId: number, from: string, to: string): Pr
 
 // Conversions summary for a date range
 export interface ConversionsSummary {
-  total: number;
+  total: number;          // all channels
+  organic: number;        // Organic Search channel only
   total_sessions: number;
   by_source: { label: string; conversions: number; sessions: number }[];
+}
+
+function isOrganicChannel(channel: string | null): boolean {
+  return !!channel && /organic/i.test(channel);
 }
 
 export async function getConversionsSummary(clientId: number, from: string, to: string): Promise<ConversionsSummary> {
@@ -350,12 +355,14 @@ export async function getConversionsSummary(clientId: number, from: string, to: 
   if (error) throw error;
   const rows = (data || []) as { source: string | null; channel: string | null; conversions: number; sessions: number }[];
   let total = 0;
+  let organic = 0;
   let totalSessions = 0;
   const bySrc = new Map<string, { conversions: number; sessions: number }>();
   for (const r of rows) {
     total += r.conversions || 0;
+    if (isOrganicChannel(r.channel)) organic += r.conversions || 0;
     totalSessions += r.sessions || 0;
-    const label = r.source || r.channel || "לא ידוע";
+    const label = r.channel || r.source || "לא ידוע";
     const cur = bySrc.get(label) || { conversions: 0, sessions: 0 };
     cur.conversions += r.conversions || 0;
     cur.sessions += r.sessions || 0;
@@ -364,8 +371,23 @@ export async function getConversionsSummary(clientId: number, from: string, to: 
   const by_source = [...bySrc.entries()]
     .map(([label, v]) => ({ label, ...v }))
     .sort((a, b) => b.conversions - a.conversions)
-    .slice(0, 6);
-  return { total, total_sessions: totalSessions, by_source };
+    .slice(0, 8);
+  return { total, organic, total_sessions: totalSessions, by_source };
+}
+
+/**
+ * Sync GSC + GA4 for an exact period so the report reflects real, current numbers.
+ * Best-effort per source — one failing shouldn't block the other.
+ */
+export async function syncReportPeriod(clientId: number, from: string, to: string): Promise<{ gsc?: string; ga4?: string }> {
+  const result: { gsc?: string; ga4?: string } = {};
+  const [gsc, ga4] = await Promise.allSettled([
+    invokeFn("gsc-sync", { client_id: clientId, from, to }),
+    invokeFn("ga4-sync", { client_id: clientId, from, to }),
+  ]);
+  if (gsc.status === "rejected") result.gsc = (gsc.reason as Error)?.message || "שגיאת GSC";
+  if (ga4.status === "rejected") result.ga4 = (ga4.reason as Error)?.message || "שגיאת GA4";
+  return result;
 }
 
 // GA4 daily totals for charts (organic only — server-side filtered already)

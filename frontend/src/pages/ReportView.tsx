@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight, Printer, Save, Sparkles, Loader2, MousePointerClick,
-  Eye, Target, TrendingUp, ArrowUp, ArrowDown, Minus, Wand2, X,
+  Eye, Target, TrendingUp, ArrowUp, ArrowDown, Minus, Wand2, X, RefreshCw,
 } from "lucide-react";
 import * as api from "../api";
 import Spinner from "../components/Spinner";
@@ -64,6 +64,16 @@ export default function ReportView() {
   });
 
   // Refine (with instructions) or rewrite from scratch (instructions omitted).
+  // Re-pull fresh GSC + GA4 for the report period, then refresh all metric queries.
+  const refresh = useMutation({
+    mutationFn: () => api.syncReportPeriod(cid, from!, to!),
+    onSuccess: () => {
+      for (const k of ["rep-gsc", "rep-conv", "rep-links", "rep-zefo", "gsc-daily"]) {
+        qc.invalidateQueries({ queryKey: [k] });
+      }
+    },
+  });
+
   const regen = useMutation({
     mutationFn: (opts?: { instructions?: string }) =>
       api.generateReportNarrative(cid, from!, to!, {
@@ -93,6 +103,9 @@ export default function ReportView() {
           <ArrowRight size={18} /> חזרה
         </button>
         <div className="flex-1" />
+        <button className="btn-secondary" onClick={() => refresh.mutate()} disabled={refresh.isPending} title="משוך נתונים מעודכנים מ-Google לתקופת הדוח">
+          {refresh.isPending ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />} רענן נתונים
+        </button>
         <button className="btn-secondary" onClick={() => setRefineOpen(true)} disabled={regen.isPending}>
           {regen.isPending ? <Loader2 size={18} className="animate-spin" /> : <Wand2 size={18} />} תקן עם קלוד
         </button>
@@ -109,6 +122,15 @@ export default function ReportView() {
           <Printer size={18} /> הדפס / PDF
         </button>
       </div>
+
+      {refresh.isSuccess && !refresh.data?.gsc && !refresh.data?.ga4 && (
+        <div className="no-print text-sm text-emerald-600 mb-3">✓ הנתונים עודכנו מ-Google לתקופת הדוח.</div>
+      )}
+      {refresh.isSuccess && (refresh.data?.gsc || refresh.data?.ga4) && (
+        <div className="no-print text-sm text-amber-600 mb-3">
+          חלק מהנתונים לא סונכרנו: {refresh.data?.gsc} {refresh.data?.ga4} — ודא שהלקוח מחובר ל-Google עם GSC ו-GA4.
+        </div>
+      )}
 
       {/* ===== The printable report ===== */}
       <div className="report-sheet bg-white border border-slate-200 rounded-xl shadow-sm p-8 max-w-4xl mx-auto">
@@ -130,7 +152,7 @@ export default function ReportView() {
           <KpiCard title="קליקים אורגניים" value={num(gsc?.clicks)} icon={MousePointerClick} color="green" />
           <KpiCard title="חשיפות" value={num(gsc?.impressions)} icon={Eye} color="blue" />
           <KpiCard title="מיקום ממוצע" value={gsc?.avg_position ?? "—"} icon={Target} color="amber" />
-          <KpiCard title="המרות" value={num(conv?.total)} icon={TrendingUp} color="rose" />
+          <KpiCard title="המרות אורגניות" value={num(conv?.organic)} hint={`סה"כ כל הערוצים: ${num(conv?.total)}`} icon={TrendingUp} color="rose" />
         </div>
 
         {/* Activity summary */}
@@ -213,14 +235,14 @@ export default function ReportView() {
 
         {/* Conversions breakdown */}
         <section className="mb-6">
-          <h2 className="text-lg font-bold text-slate-900 mb-2 border-r-4 border-brand-500 pr-2">המרות לפי מקור</h2>
+          <h2 className="text-lg font-bold text-slate-900 mb-2 border-r-4 border-brand-500 pr-2">המרות לפי ערוץ</h2>
           {(conv?.by_source || []).length === 0 ? (
             <p className="text-slate-400 text-sm">אין נתוני המרות בתקופה. סנכרן GA4.</p>
           ) : (
             <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="bg-slate-50 text-slate-600">
-                  <th className="text-right p-2 font-medium">מקור</th>
+                  <th className="text-right p-2 font-medium">ערוץ / מקור</th>
                   <th className="p-2 font-medium">המרות</th>
                   <th className="p-2 font-medium">סשנים</th>
                 </tr>
