@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, FileText, MousePointerClick, Eye, TrendingUp, TrendingDown, Minus, RefreshCw, Link2, Pencil, ListChecks, BarChart3, Target, CheckCircle2 } from "lucide-react";
+import { Search, FileText, MousePointerClick, Eye, TrendingUp, TrendingDown, Minus, RefreshCw, Link2, Pencil, ListChecks, BarChart3, Target, CheckCircle2, Wand2, ArrowLeft } from "lucide-react";
 import * as api from "../api";
 import KpiCard from "../components/KpiCard";
 import PageHeader from "../components/PageHeader";
@@ -60,6 +60,12 @@ export default function ClientDashboard() {
   const convSrc = useQuery({
     queryKey: ["conv-src", cid, convRange],
     queryFn: () => api.getConversionsSummary(cid, convRange.from, convRange.to),
+    enabled: !!cid,
+  });
+
+  const opps = useQuery({
+    queryKey: ["opps", cid, kpiRange],
+    queryFn: () => api.getGscOpportunities(cid, kpiRange.from, kpiRange.to),
     enabled: !!cid,
   });
 
@@ -249,6 +255,36 @@ export default function ClientDashboard() {
           <KpiCard title="המרות" value={convKpi.isLoading ? "—" : (convKpi.data?.total ?? 0).toLocaleString()} icon={CheckCircle2} color="green" />
         </div>
       </div>
+
+      {/* Quick wins — near-first-page opportunities (links to the internal recommendations tab) */}
+      {opps.data && opps.data.near_first_page.length > 0 && (
+        <div className="card mb-6 border-r-4 border-r-emerald-400">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h3 className="font-semibold flex items-center gap-2 text-slate-800">
+              <TrendingUp size={18} className="text-emerald-600" /> הזדמנויות מהירות — קרוב לעמוד הראשון
+              <span className="text-xs font-normal text-slate-400">(מיקום 8–20, חשיפות גבוהות)</span>
+            </h3>
+            <Link to={`/clients/${cid}/recommendations`} className="text-sm text-brand-600 hover:text-brand-700 inline-flex items-center gap-1">
+              <Wand2 size={15} /> לכל ההמלצות <ArrowLeft size={14} />
+            </Link>
+          </div>
+          <table className="w-full text-sm">
+            <thead className="text-right text-slate-500 border-b border-slate-200">
+              <tr><th className="py-2">ביטוי</th><th>מיקום</th><th>חשיפות</th><th>קליקים</th></tr>
+            </thead>
+            <tbody>
+              {opps.data.near_first_page.slice(0, 5).map((r) => (
+                <tr key={r.term} className="border-b border-slate-100 last:border-0">
+                  <td className="py-2 font-medium text-slate-900">{r.term}</td>
+                  <td className="font-semibold text-slate-700">{r.position}</td>
+                  <td className="text-slate-600">{r.impressions.toLocaleString()}</td>
+                  <td className="text-slate-500">{r.clicks.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">

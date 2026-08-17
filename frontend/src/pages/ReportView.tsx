@@ -41,7 +41,6 @@ export default function ReportView() {
   const { data: conv } = useQuery({ queryKey: ["rep-conv", cid, from, to], queryFn: () => api.getConversionsSummary(cid, from!, to!), enabled: !!from && !!to });
   const { data: links } = useQuery({ queryKey: ["rep-links", cid, from, to], queryFn: () => api.listReportLinks(cid, from!, to!), enabled: !!from && !!to });
   const { data: zefo } = useQuery({ queryKey: ["rep-zefo", cid], queryFn: () => api.listZefoKeywords(cid), enabled: !!cid });
-  const { data: opps } = useQuery({ queryKey: ["rep-opps", cid, from, to], queryFn: () => api.getGscOpportunities(cid, from!, to!), enabled: !!from && !!to });
 
   const [editing, setEditing] = useState(false);
   const [summary, setSummary] = useState("");
@@ -203,70 +202,6 @@ export default function ReportView() {
                     <td className="text-center p-2 text-slate-500">{z.initial_ranking ?? "—"}</td>
                     <td className="text-center p-2 font-semibold text-slate-900">{z.ranking ?? "—"}</td>
                     <td className="text-center p-2"><RankDelta initial={z.initial_ranking} current={z.ranking} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </section>
-
-        {/* Opportunity #1 — near first page */}
-        <section className="mb-6">
-          <h2 className="text-lg font-bold text-slate-900 mb-1 border-r-4 border-emerald-500 pr-2">הזדמנויות מהירות — ביטויים קרובים לעמוד הראשון</h2>
-          <p className="text-xs text-slate-500 mb-2">ביטויים במיקום 8–20 עם חשיפות משמעותיות (30+) — פוטנציאל הצמיחה המהיר ביותר. שיפור תוכן, כותרות, שאלות ותשובות וקישורים פנימיים בעמוד הרלוונטי צפוי להעלות אותם לעמוד הראשון.</p>
-          {!opps || opps.near_first_page.length === 0 ? (
-            <p className="text-slate-400 text-sm">אין ביטויים מתאימים בתקופה. ודא שיש נתוני GSC (לחץ "רענן נתונים").</p>
-          ) : (
-            <table className="w-full text-sm border-collapse">
-              <thead>
-                <tr className="bg-emerald-50 text-slate-600">
-                  <th className="text-right p-2 font-medium">ביטוי</th>
-                  <th className="p-2 font-medium">חשיפות</th>
-                  <th className="p-2 font-medium">מיקום</th>
-                  <th className="p-2 font-medium">קליקים</th>
-                  <th className="p-2 font-medium">CTR</th>
-                </tr>
-              </thead>
-              <tbody>
-                {opps.near_first_page.map((r) => (
-                  <tr key={r.term} className="border-b border-slate-100">
-                    <td className="text-right p-2 text-slate-800">{r.term}</td>
-                    <td className="text-center p-2 text-slate-600">{num(r.impressions)}</td>
-                    <td className="text-center p-2 font-semibold text-slate-900">{r.position}</td>
-                    <td className="text-center p-2 text-slate-500">{num(r.clicks)}</td>
-                    <td className="text-center p-2 text-slate-500">{(r.ctr * 100).toFixed(1)}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </section>
-
-        {/* Opportunity #2 — high impressions, low CTR */}
-        <section className="mb-6">
-          <h2 className="text-lg font-bold text-slate-900 mb-1 border-r-4 border-amber-500 pr-2">חשיפות גבוהות ו-CTR נמוך</h2>
-          <p className="text-xs text-slate-500 mb-2">ביטויים שמופיעים בגוגל אך נלחצים פחות מהצפוי <span className="font-medium">ביחס למיקום</span> (לא סף אחיד) — הזדמנות לשיפור כותרת ה-SEO ותיאור ה-Meta: יתרון, מספר, מיקום או מחיר בכותרת.</p>
-          {!opps || opps.low_ctr.length === 0 ? (
-            <p className="text-slate-400 text-sm">אין ביטויים מתאימים בתקופה.</p>
-          ) : (
-            <table className="w-full text-sm border-collapse">
-              <thead>
-                <tr className="bg-amber-50 text-slate-600">
-                  <th className="text-right p-2 font-medium">ביטוי</th>
-                  <th className="p-2 font-medium">חשיפות</th>
-                  <th className="p-2 font-medium">מיקום</th>
-                  <th className="p-2 font-medium">CTR בפועל</th>
-                  <th className="p-2 font-medium">CTR צפוי</th>
-                </tr>
-              </thead>
-              <tbody>
-                {opps.low_ctr.map((r) => (
-                  <tr key={r.term} className="border-b border-slate-100">
-                    <td className="text-right p-2 text-slate-800">{r.term}</td>
-                    <td className="text-center p-2 text-slate-600">{num(r.impressions)}</td>
-                    <td className="text-center p-2 text-slate-700">{r.position}</td>
-                    <td className="text-center p-2 font-semibold text-rose-600">{(r.ctr * 100).toFixed(1)}%</td>
-                    <td className="text-center p-2 text-slate-400">{(r.expected_ctr * 100).toFixed(1)}%</td>
                   </tr>
                 ))}
               </tbody>

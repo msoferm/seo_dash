@@ -14,15 +14,6 @@ function isOrganic(channel: string | null): boolean {
   return !!channel && /organic/i.test(channel);
 }
 
-/** Rough organic CTR-by-position curve (0-1) — CTR is only "low" relative to position. */
-function expectedCtr(pos: number): number {
-  const t: Record<number, number> = { 1: 0.30, 2: 0.15, 3: 0.10, 4: 0.07, 5: 0.05, 6: 0.04, 7: 0.035, 8: 0.03, 9: 0.025, 10: 0.02 };
-  const p = Math.round(pos);
-  if (p <= 1) return 0.30;
-  if (p >= 11) return 0.012;
-  return t[p] ?? 0.02;
-}
-
 /** GSC + conversion totals for a [from,to] window. */
 async function windowTotals(sb: any, clientId: number, from: string, to: string) {
   const [gscRes, convRes] = await Promise.all([
@@ -94,22 +85,6 @@ Deno.serve(async (req) => {
     const linkTypes = new Map<string, number>();
     for (const l of links) linkTypes.set(l.link_type, (linkTypes.get(l.link_type) || 0) + 1);
 
-    // GSC opportunity analyses (query-level) for automatic recommendations
-    let nearFirstPage: any[] = [];
-    let lowCtr: any[] = [];
-    try {
-      const { data: oppRows } = await sb.rpc("gsc_query_opportunities", { p_client_id: client_id, p_from: from, p_to: to });
-      const rows = (oppRows || []) as any[];
-      nearFirstPage = rows
-        .filter((r) => r.position >= 8 && r.position <= 20 && r.impressions >= 30)
-        .sort((a, b) => b.impressions - a.impressions)
-        .slice(0, 12);
-      lowCtr = rows
-        .filter((r) => r.impressions >= 50 && r.ctr < expectedCtr(r.position) * 0.6)
-        .sort((a, b) => b.impressions - a.impressions)
-        .slice(0, 12);
-    } catch (_) { /* opportunities are best-effort */ }
-
     const fmt = (arr: any[], f: (x: any) => string) => (arr.length ? arr.map(f).join("\n") : "אין נתונים");
 
     const context = `לקוח: ${client.name} (דומיין: ${client.domain})
@@ -136,15 +111,7 @@ ${fmt(zefo.slice(0, 15), (z: any) => `- ${z.keyword} | ${z.ranking ?? "—"} | $
 ${fmt([...linkTypes.entries()], ([t, c]) => `- ${t}: ${c}`)}
 
 --- מילות מפתח מרכזיות (נפח חיפוש) ---
-${fmt(kw, (k: any) => `- ${k.term} (${k.monthly_searches})`)}
-
---- הזדמנות א': ביטויים קרובים לעמוד הראשון (מיקום 8-20, חשיפות 30+) — פוטנציאל צמיחה מהיר ---
-(מילה | מיקום | חשיפות | קליקים)
-${fmt(nearFirstPage, (r: any) => `- ${r.term} | ${r.position} | ${r.impressions} | ${r.clicks}`)}
-
---- הזדמנות ב': חשיפות גבוהות ו-CTR נמוך ביחס למיקום — שיפור כותרת/תיאור ---
-(מילה | מיקום | חשיפות | CTR בפועל)
-${fmt(lowCtr, (r: any) => `- ${r.term} | ${r.position} | ${r.impressions} | ${(r.ctr * 100).toFixed(1)}%`)}`;
+${fmt(kw, (k: any) => `- ${k.term} (${k.monthly_searches})`)}`;
 
     let system =
       "אתה מנהל קידום אורגני (SEO) מקצועי שכותב דוח חודשי חיובי ומעודד ללקוח. " +
@@ -153,10 +120,7 @@ ${fmt(lowCtr, (r: any) => `- ${r.term} | ${r.position} | ${r.impressions} | ${(r
       "אם מדד מסוים נמוך או לא השתנה — אל תתמקד בו לרעה; במקום זאת מסגר אותו כהזדמנות והצג את הצעד הבא. לעולם אל תמציא נתונים. " +
       "כתוב בעברית, בלי סימני מרקדאון, בשני חלקים: " +
       "1) 'summary' — סיכום פעילות והישגי החודש (2-4 פסקאות קצרות). " +
-      "2) 'recommendations' — המלצות להמשך קונקרטיות, מבוססות-נתונים ומדויקות לפי שתי ההזדמנויות שסופקו: " +
-      "עבור 'ביטויים קרובים לעמוד הראשון' — פרט אילו ביטויים ספציפיים לחזק ואיך (שיפור תוכן העמוד, כותרות ופסקאות סביב הביטוי, שאלות ותשובות, קישורים פנימיים, התאמת כוונת החיפוש). " +
-      "עבור 'חשיפות גבוהות ו-CTR נמוך' — פרט אילו ביטויים לשפר להם כותרת SEO ותיאור Meta (הוספת יתרון/מספר/מיקום/מחיר/תשובה ברורה). " +
-      "ציין שמות ביטויים אמיתיים מהרשימות. אם רשימה ריקה — דלג עליה. סה\"כ 4-8 המלצות. " +
+      "2) 'recommendations' — המלצות להמשך כלליות ומתאימות ללקוח (המשך תוכן איכותי, חיזוק מילות מפתח מרכזיות, הרחבת שאלות ותשובות, המשך בניית קישורים). 3-5 המלצות בטון חיובי. " +
       "החזר אך ורק JSON תקין: {\"summary\":\"...\",\"recommendations\":\"...\"}.";
 
     let userContent = context;

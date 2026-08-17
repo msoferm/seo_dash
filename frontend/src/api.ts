@@ -407,6 +407,11 @@ export async function getGscOpportunities(clientId: number, from: string, to: st
   return { near_first_page, low_ctr };
 }
 
+/** Internal (team) SEO recommendations from the GSC opportunities — NOT the client report. */
+export async function generateSeoRecommendations(clientId: number, from: string, to: string): Promise<{ recommendations: string }> {
+  return await invokeFn("seo-recommendations", { client_id: clientId, from, to });
+}
+
 /**
  * Sync GSC + GA4 for an exact period so the report reflects real, current numbers.
  * Best-effort per source — one failing shouldn't block the other.
