@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Wand2, Loader2, RefreshCw, TrendingUp, MousePointerClick, Copy, Check } from "lucide-react";
+import { Wand2, Loader2, RefreshCw, TrendingUp, MousePointerClick, Copy, Check, Layers, AlertTriangle } from "lucide-react";
 import * as api from "../api";
 import PageHeader from "../components/PageHeader";
 import Spinner from "../components/Spinner";
@@ -28,9 +28,15 @@ export default function RecommendationsPage() {
     enabled: !!cid,
   });
 
+  const pmap = useQuery({
+    queryKey: ["pmap", cid, range],
+    queryFn: () => api.getPageQueryMap(cid, range.from, range.to),
+    enabled: !!cid,
+  });
+
   const refresh = useMutation({
     mutationFn: () => api.syncReportPeriod(cid, range.from, range.to),
-    onSuccess: () => opps.refetch(),
+    onSuccess: () => { opps.refetch(); pmap.refetch(); },
   });
 
   const generate = useMutation({
@@ -158,6 +164,71 @@ export default function RecommendationsPage() {
                   ))}
                 </tbody>
               </table>
+            )}
+          </div>
+
+          {/* Cannibalization alerts */}
+          {pmap.data && pmap.data.cannibalization.length > 0 && (
+            <div className="card border-r-4 border-r-rose-400">
+              <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-1">
+                <AlertTriangle size={18} className="text-rose-600" /> קניבליזציה — ביטוי אחד מוביל לכמה עמודים
+              </h3>
+              <p className="text-xs text-slate-500 mb-3">כדאי לאחד/להבהיר איזה עמוד ראשי לכל ביטוי, ולחזק קישורים פנימיים אליו — כדי לא לפצל את הכוח בין עמודים.</p>
+              <ul className="space-y-2">
+                {pmap.data.cannibalization.map((c) => (
+                  <li key={c.term} className="text-sm">
+                    <span className="font-semibold text-slate-900">{c.term}</span>
+                    <span className="text-slate-400"> ({c.pages.length} עמודים)</span>
+                    <ul className="mr-4 mt-0.5 text-xs text-slate-500 list-disc list-inside">
+                      {c.pages.slice(0, 4).map((p) => (
+                        <li key={p.page}><a href={p.page} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline break-all">{p.page}</a> · מיקום {p.position} · {num(p.impressions)} חשיפות</li>
+                      ))}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Query map per page */}
+          <div className="card">
+            <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-1">
+              <Layers size={18} className="text-brand-600" /> מפת שאילתות לכל עמוד
+            </h3>
+            <p className="text-xs text-slate-500 mb-3">מה גוגל חושב שכל עמוד עוסק בו — ביטוי מרכזי ומשניים, ומה הפעולה המומלצת. לחידוד תוכן ומניעת חפיפה.</p>
+            {!pmap.data || pmap.data.pages.length === 0 ? (
+              <p className="text-slate-400 text-sm">אין נתונים. לחץ "רענן נתונים" כדי למשוך GSC לתקופה.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border-collapse min-w-[720px]">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-600">
+                      <th className="text-right p-2 font-medium">עמוד</th>
+                      <th className="text-right p-2 font-medium">ביטוי מרכזי</th>
+                      <th className="text-right p-2 font-medium">ביטויים משניים</th>
+                      <th className="p-2 font-medium">קליקים</th>
+                      <th className="p-2 font-medium">חשיפות</th>
+                      <th className="p-2 font-medium">מיקום</th>
+                      <th className="p-2 font-medium">CTR</th>
+                      <th className="text-right p-2 font-medium">פעולה מומלצת</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pmap.data.pages.map((p) => (
+                      <tr key={p.page} className={`border-b border-slate-100 ${p.cannibalized ? "bg-rose-50/40" : ""}`}>
+                        <td className="text-right p-2"><a href={p.page} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline break-all">{p.page.replace(/^https?:\/\/[^/]+/, "") || p.page}</a></td>
+                        <td className="text-right p-2 font-medium text-slate-900">{p.primary}</td>
+                        <td className="text-right p-2 text-slate-500 text-xs">{p.secondary.join(", ") || "—"}</td>
+                        <td className="text-center p-2 text-slate-600">{num(p.clicks)}</td>
+                        <td className="text-center p-2 text-slate-600">{num(p.impressions)}</td>
+                        <td className="text-center p-2 font-semibold text-slate-800">{p.position}</td>
+                        <td className="text-center p-2 text-slate-500">{(p.ctr * 100).toFixed(1)}%</td>
+                        <td className="text-right p-2 text-xs text-slate-600">{p.action}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>

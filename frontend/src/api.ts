@@ -407,6 +407,73 @@ export async function getGscOpportunities(clientId: number, from: string, to: st
   return { near_first_page, low_ctr };
 }
 
+// ===== Query map per page (cannibalization / content sharpening) =====
+export interface PageMapEntry {
+  page: string;
+  primary: string;
+  secondary: string[];
+  clicks: number;
+  impressions: number;
+  position: number;
+  ctr: number;
+  action: string;
+  cannibalized: boolean;
+}
+export interface CannibalTerm { term: string; pages: { page: string; impressions: number; position: number }[] }
+export interface PageQueryMap { pages: PageMapEntry[]; cannibalization: CannibalTerm[] }
+
+export async function getPageQueryMap(clientId: number, from: string, to: string): Promise<PageQueryMap> {
+  const { data, error } = await supabase.rpc("gsc_page_query_map", { p_client_id: clientId, p_from: from, p_to: to });
+  if (error) throw error;
+  const rows = (data || []) as { page: string; term: string; clicks: number; impressions: number; ctr: number; position: number }[];
+
+  // term -> pages (for cannibalization: one query ranking on several pages)
+  const termPages = new Map<string, { page: string; impressions: number; position: number }[]>();
+  for (const r of rows) {
+    const arr = termPages.get(r.term) || [];
+    arr.push({ page: r.page, impressions: r.impressions, position: r.position });
+    termPages.set(r.term, arr);
+  }
+  const cannibalTerms = new Set<string>();
+  const cannibalization: CannibalTerm[] = [];
+  for (const [term, pages] of termPages) {
+    const strong = pages.filter((p) => p.impressions >= 20);
+    if (strong.length >= 2) {
+      cannibalTerms.add(term);
+      cannibalization.push({ term, pages: strong.sort((a, b) => b.impressions - a.impressions) });
+    }
+  }
+  cannibalization.sort((a, b) => b.pages.reduce((s, p) => s + p.impressions, 0) - a.pages.reduce((s, p) => s + p.impressions, 0));
+
+  // group by page
+  const byPage = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const arr = byPage.get(r.page) || [];
+    arr.push(r);
+    byPage.set(r.page, arr);
+  }
+  const pages: PageMapEntry[] = [];
+  for (const [page, prows] of byPage) {
+    const sorted = [...prows].sort((a, b) => b.clicks - a.clicks || b.impressions - a.impressions);
+    const primary = sorted[0]?.term || "";
+    const secondary = sorted.slice(1, 4).map((r) => r.term);
+    let clicks = 0, impressions = 0, wPos = 0;
+    for (const r of prows) { clicks += r.clicks; impressions += r.impressions; wPos += r.position * r.impressions; }
+    const position = impressions > 0 ? Math.round((wPos / impressions) * 10) / 10 : 0;
+    const ctr = impressions > 0 ? clicks / impressions : 0;
+    const cannibalized = cannibalTerms.has(primary);
+    let action: string;
+    if (cannibalized) action = "קניבליזציה — כמה עמודים על אותו ביטוי, אחד ראשי";
+    else if (position <= 3) action = "מדורג היטב — לשמר ולחזק";
+    else if (position <= 10) action = "להרחיב תוכן סביב הביטוי המרכזי";
+    else if (position <= 20) action = "פוטנציאל עלייה — שיפור תוכן/כותרות/קישורים פנימיים";
+    else action = "לשפר משמעותית או לבדוק התאמת כוונת חיפוש";
+    pages.push({ page, primary, secondary, clicks, impressions, position, ctr, action, cannibalized });
+  }
+  pages.sort((a, b) => b.impressions - a.impressions);
+  return { pages: pages.slice(0, 30), cannibalization: cannibalization.slice(0, 15) };
+}
+
 /** Internal (team) SEO recommendations from the GSC opportunities — NOT the client report. */
 export async function generateSeoRecommendations(clientId: number, from: string, to: string): Promise<{ recommendations: string }> {
   return await invokeFn("seo-recommendations", { client_id: clientId, from, to });

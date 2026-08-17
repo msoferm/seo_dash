@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, FileText, MousePointerClick, Eye, TrendingUp, TrendingDown, Minus, RefreshCw, Link2, Pencil, ListChecks, BarChart3, Target, CheckCircle2, Wand2, ArrowLeft } from "lucide-react";
+import { Search, FileText, MousePointerClick, Eye, TrendingUp, TrendingDown, Minus, RefreshCw, Link2, Pencil, ListChecks, BarChart3, Target, CheckCircle2, Wand2, ArrowLeft, AlertTriangle } from "lucide-react";
 import * as api from "../api";
 import KpiCard from "../components/KpiCard";
 import PageHeader from "../components/PageHeader";
@@ -66,6 +66,12 @@ export default function ClientDashboard() {
   const opps = useQuery({
     queryKey: ["opps", cid, kpiRange],
     queryFn: () => api.getGscOpportunities(cid, kpiRange.from, kpiRange.to),
+    enabled: !!cid,
+  });
+
+  const pmap = useQuery({
+    queryKey: ["pmap", cid, kpiRange],
+    queryFn: () => api.getPageQueryMap(cid, kpiRange.from, kpiRange.to),
     enabled: !!cid,
   });
 
@@ -284,6 +290,18 @@ export default function ClientDashboard() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* Cannibalization alert (links to internal recommendations) */}
+      {pmap.data && pmap.data.cannibalization.length > 0 && (
+        <Link to={`/clients/${cid}/recommendations`} className="card mb-6 border-r-4 border-r-rose-400 flex items-center gap-3 hover:bg-rose-50/30 transition-colors">
+          <AlertTriangle size={22} className="text-rose-600 shrink-0" />
+          <div className="flex-1">
+            <div className="font-semibold text-slate-800">זוהתה קניבליזציה ב-{pmap.data.cannibalization.length} ביטויים</div>
+            <div className="text-xs text-slate-500">אותו ביטוי מוביל לכמה עמודים — כדאי לאחד ולחדד. לחץ לפירוט ב"המלצות קלוד".</div>
+          </div>
+          <ArrowLeft size={16} className="text-slate-400 shrink-0" />
+        </Link>
       )}
 
       {/* Charts */}
