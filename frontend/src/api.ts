@@ -375,6 +375,38 @@ export async function getConversionsSummary(clientId: number, from: string, to: 
   return { total, organic, total_sessions: totalSessions, by_source };
 }
 
+// ===== GSC opportunity analyses (for the report) =====
+export interface GscQueryStat { term: string; clicks: number; impressions: number; ctr: number; position: number }
+export interface GscOpportunities {
+  near_first_page: GscQueryStat[];                          // position 8-20 with real impressions
+  low_ctr: (GscQueryStat & { expected_ctr: number })[];    // high impressions, CTR low FOR ITS POSITION
+}
+
+/** Rough organic CTR-by-position curve (0-1). CTR is only "low" relative to position. */
+export function expectedCtr(pos: number): number {
+  const t: Record<number, number> = { 1: 0.30, 2: 0.15, 3: 0.10, 4: 0.07, 5: 0.05, 6: 0.04, 7: 0.035, 8: 0.03, 9: 0.025, 10: 0.02 };
+  const p = Math.round(pos);
+  if (p <= 1) return 0.30;
+  if (p >= 11) return 0.012;
+  return t[p] ?? 0.02;
+}
+
+export async function getGscOpportunities(clientId: number, from: string, to: string): Promise<GscOpportunities> {
+  const { data, error } = await supabase.rpc("gsc_query_opportunities", { p_client_id: clientId, p_from: from, p_to: to });
+  if (error) throw error;
+  const rows = (data || []) as GscQueryStat[];
+  const near_first_page = rows
+    .filter((r) => r.position >= 8 && r.position <= 20 && r.impressions >= 30)
+    .sort((a, b) => b.impressions - a.impressions)
+    .slice(0, 15);
+  const low_ctr = rows
+    .filter((r) => r.impressions >= 50 && r.ctr < expectedCtr(r.position) * 0.6)
+    .map((r) => ({ ...r, expected_ctr: expectedCtr(r.position) }))
+    .sort((a, b) => b.impressions - a.impressions)
+    .slice(0, 15);
+  return { near_first_page, low_ctr };
+}
+
 /**
  * Sync GSC + GA4 for an exact period so the report reflects real, current numbers.
  * Best-effort per source — one failing shouldn't block the other.
