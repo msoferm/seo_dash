@@ -10,6 +10,7 @@ export interface Client {
   notes: string | null;
   created_at: string;
   google_token_json: string | null;
+  link_prefs?: string | null;
 }
 
 export interface Keyword {
@@ -501,6 +502,12 @@ export interface LinkProspect {
 /** Run the research agent (web search) to find new link opportunities. */
 export async function runLinkProspector(clientId: number): Promise<{ created: number }> {
   return await invokeFn("link-prospector", { client_id: clientId });
+}
+
+/** Free-text preferences the prospecting agent always respects (learning). */
+export async function updateClientLinkPrefs(clientId: number, prefs: string): Promise<void> {
+  const { error } = await supabase.from("clients").update({ link_prefs: prefs }).eq("id", clientId);
+  if (error) throw error;
 }
 
 export async function listLinkProspects(clientId: number): Promise<LinkProspect[]> {

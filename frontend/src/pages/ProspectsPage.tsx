@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Radar, Loader2, ExternalLink, Trash2, Check, Mail, Copy, X, ThumbsUp } from "lucide-react";
+import { Radar, Loader2, ExternalLink, Trash2, Check, Mail, Copy, X, ThumbsUp, Settings2, CalendarClock, Save } from "lucide-react";
 import * as api from "../api";
 import type { LinkProspect, ProspectStatus, ProspectType } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -125,6 +125,14 @@ export default function ProspectsPage() {
   const { data: prospects, isLoading } = useQuery({ queryKey: ["prospects", cid], queryFn: () => api.listLinkProspects(cid), enabled: !!cid });
   const invalidate = () => qc.invalidateQueries({ queryKey: ["prospects", cid] });
 
+  const [showPrefs, setShowPrefs] = useState(false);
+  const [prefs, setPrefs] = useState("");
+  useEffect(() => { if (client) setPrefs(client.link_prefs || ""); }, [client]);
+  const savePrefs = useMutation({
+    mutationFn: () => api.updateClientLinkPrefs(cid, prefs),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["client", cid] }); setShowPrefs(false); },
+  });
+
   const run = useMutation({ mutationFn: () => api.runLinkProspector(cid), onSuccess: invalidate });
   const status = useMutation({ mutationFn: ({ id, s }: { id: number; s: ProspectStatus }) => api.setProspectStatus(id, s), onSuccess: invalidate });
   const promote = useMutation({ mutationFn: (p: LinkProspect) => api.promoteProspectToBank(p), onSuccess: invalidate });
@@ -141,12 +149,34 @@ export default function ProspectsPage() {
         title="איתור קישורים"
         subtitle={client ? `${client.name} · סוכן מחקר שמוצא הזדמנויות קישור (לאישור ידני)` : "סוכן מחקר להזדמנויות קישור"}
         actions={
-          <button className="btn-primary" onClick={() => run.mutate()} disabled={run.isPending}>
-            {run.isPending ? <Loader2 size={18} className="animate-spin" /> : <Radar size={18} />}
-            {run.isPending ? "הסוכן מחפש באינטרנט..." : "הרץ סוכן איתור"}
-          </button>
+          <>
+            <button className="btn-secondary" onClick={() => setShowPrefs((s) => !s)}><Settings2 size={18} /> העדפות</button>
+            <button className="btn-primary" onClick={() => run.mutate()} disabled={run.isPending}>
+              {run.isPending ? <Loader2 size={18} className="animate-spin" /> : <Radar size={18} />}
+              {run.isPending ? "הסוכן מחפש באינטרנט..." : "הרץ סוכן איתור"}
+            </button>
+          </>
         }
       />
+
+      <div className="mb-4 text-xs text-slate-500 flex items-center gap-1.5">
+        <CalendarClock size={14} /> הסוכן רץ גם אוטומטית כל שבוע (שני 06:00) — גם כשהמחשב כבוי. הזדמנויות חדשות יחכו כאן.
+      </div>
+
+      {/* Learning preferences */}
+      {showPrefs && (
+        <div className="card mb-4 border-brand-200">
+          <h3 className="font-semibold text-sm text-slate-800 mb-2 flex items-center gap-2"><Settings2 size={16} /> העדפות לסוכן (למידה)</h3>
+          <p className="text-xs text-slate-500 mb-2">הסוכן מכבד את ההעדפות האלה תמיד, בנוסף ללמידה מאישורים/דחיות שלך. לדוגמה: "רק אתרים ישראליים, בלי פורומים, העדף דירקטוריות מקומיות".</p>
+          <textarea className="input" rows={3} value={prefs} onChange={(e) => setPrefs(e.target.value)} placeholder="כתוב העדפות..." />
+          <div className="flex gap-2 mt-2">
+            <button className="btn-primary text-sm py-1.5" onClick={() => savePrefs.mutate()} disabled={savePrefs.isPending}>
+              {savePrefs.isPending ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} שמור
+            </button>
+            <button className="btn-secondary text-sm py-1.5" onClick={() => setShowPrefs(false)}>ביטול</button>
+          </div>
+        </div>
+      )}
 
       {run.isError && <div className="mb-4 text-sm text-rose-600">שגיאה: {(run.error as any)?.message}</div>}
       {run.isSuccess && <div className="mb-4 text-sm text-emerald-700">הסוכן הוסיף {(run.data as any).created} הזדמנויות חדשות.</div>}
