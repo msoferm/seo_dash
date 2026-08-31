@@ -23,9 +23,9 @@ Deno.serve(async (req) => {
     const { data: gscRows } = await sb.from("gsc_metrics").select("page, clicks").eq("client_id", client_id).not("page", "is", null);
     const agg = new Map<string, number>();
     for (const r of gscRows || []) agg.set(r.page, (agg.get(r.page) || 0) + (r.clicks || 0));
-    const topPages = [...agg.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([p]) => p);
+    const topPages = [...agg.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([p]) => p);
     const home = client.domain?.startsWith("http") ? client.domain : `https://${(client.domain || "").replace(/^sc-domain:/, "")}`;
-    const urls = [...new Set([home, ...topPages])].filter(Boolean).slice(0, 7);
+    const urls = [...new Set([home, ...topPages])].filter(Boolean).slice(0, 4);
     if (urls.length === 0) return errorResponse("אין עמודים לבדיקה. סנכרן GSC תחילה.", 400);
 
     const system =
@@ -45,7 +45,7 @@ Deno.serve(async (req) => {
       max_tokens: 4500,
       system,
       messages: [{ role: "user", content: userMsg }],
-      tools: [{ type: "web_fetch_20260209", name: "web_fetch", max_uses: 8 }],
+      tools: [{ type: "web_fetch_20250910", name: "web_fetch", max_uses: 5 }],
     });
 
     let parsed: any;

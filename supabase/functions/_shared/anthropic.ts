@@ -57,9 +57,10 @@ export const DEFAULT_MODEL = Deno.env.get("CLAUDE_MODEL") || "claude-sonnet-4-6"
 
 /** Web search + web fetch server tools (Claude runs them on Anthropic's side).
  *  Budgets kept modest so a single agent run stays under the 150s edge-function limit. */
+// Basic variants (no code-exec dynamic filtering) — much faster, which matters for the
+// 150s edge-function limit.
 export const WEB_TOOLS = [
-  { type: "web_search_20260209", name: "web_search", max_uses: 4 },
-  { type: "web_fetch_20260209", name: "web_fetch", max_uses: 2 },
+  { type: "web_search_20250305", name: "web_search", max_uses: 3 },
 ];
 
 export interface AgentRequest {
@@ -84,7 +85,8 @@ export async function callClaudeAgent(req: AgentRequest, maxRounds = 8): Promise
     const res = await fetch(API_URL, {
       method: "POST",
       headers: { "x-api-key": apiKey, "anthropic-version": VERSION, "content-type": "application/json" },
-      body: JSON.stringify({ model: req.model, max_tokens: req.max_tokens, system: req.system, messages, tools: req.tools }),
+      // thinking disabled — these are search+extract tasks; disabling it cuts latency a lot.
+      body: JSON.stringify({ model: req.model, max_tokens: req.max_tokens, system: req.system, messages, tools: req.tools, thinking: { type: "disabled" } }),
     });
     if (!res.ok) throw new Error(`Anthropic API ${res.status}: ${await res.text()}`);
     last = await res.json();

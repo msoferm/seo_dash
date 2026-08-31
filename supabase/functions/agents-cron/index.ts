@@ -20,7 +20,23 @@ Deno.serve(async (req) => {
   try {
     const secret = Deno.env.get("CRON_SECRET");
     if (!secret || req.headers.get("x-cron-secret") !== secret) return errorResponse("unauthorized", 401);
-    const { index = 0 } = await req.json().catch(() => ({}));
+    const body = await req.json().catch(() => ({}));
+    const { index = 0 } = body;
+
+    // Diagnostic: run one client synchronously and return the outcome/error.
+    if (body.debug) {
+      const sb = serviceClient();
+      const { data: clients } = await sb.from("clients").select("id, name").order("id");
+      const c = (clients || [])[index];
+      if (!c) return jsonResponse({ debug: true, error: "no client at index" });
+      const t0 = Date.now();
+      try {
+        const created = await prospectForClient(sb, c.id);
+        return jsonResponse({ debug: true, client: c.name, created, seconds: Math.round((Date.now() - t0) / 1000) });
+      } catch (e) {
+        return jsonResponse({ debug: true, client: c.name, error: String((e as Error)?.message || e), seconds: Math.round((Date.now() - t0) / 1000) });
+      }
+    }
 
     const work = (async () => {
       const sb = serviceClient();

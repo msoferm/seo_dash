@@ -3,7 +3,11 @@
  * cron. Learns from the team's past decisions: prefers approved types, avoids rejected
  * domains, and respects the client's free-text link preferences.
  */
-import { callClaudeAgent, DEFAULT_MODEL, WEB_TOOLS, textOf, extractJson } from "./anthropic.ts";
+import { callClaudeAgent, DEFAULT_MODEL, textOf, extractJson } from "./anthropic.ts";
+
+// Search-only, tight budget — each web_search round-trip is a full resend, so keeping
+// this small is what lets one client's run finish under the 150s edge-function limit.
+const PROSPECT_TOOLS = [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }];
 
 const VALID_TYPES = ["directory", "blog", "forum", "mention", "local", "other"];
 
@@ -50,9 +54,10 @@ export async function prospectForClient(sb: any, clientId: number): Promise<numb
     "התמקד ב: (directory) אינדקסים/דירקטוריות עסקים ומקומיים רלוונטיים; (blog) בלוגים/אתרים בתחום עם עמוד 'כתבו לנו'/'guest post'; (forum) פורומים וקהילות; (local) ציטוטים מקומיים; (mention) אזכורי מותג ללא קישור. " +
     "אל תציע: רכישת קישורים ספאמית, PBN, אתרים לא רלוונטיים, או כל דבר שמפר את הנחיות גוגל. " +
     "לכל הזדמנות דרג עדיפות (score 0-100). אם מצאת עמוד קשר/אימייל — כלול אותו. " +
-    "אחרי המחקר החזר אך ורק JSON: " +
+    "אחרי המחקר החזר אך ורק JSON במבנה: " +
     `{"prospects":[{"type":"directory|blog|forum|mention|local|other","url":"https://...","title":"...","reason":"...","suggested_action":"...","contact":"אימייל/עמוד קשר או null","score":0}]}. ` +
-    "החזר בין 6 ל-10 הזדמנויות. כתוב בעברית (למעט כתובות)." + learning;
+    "החזר בין 6 ל-8 הזדמנויות, כל שדה טקסט קצר (משפט). כתוב בעברית (למעט כתובות). " +
+    "קריטי: החזר אך ורק את אובייקט ה-JSON — בלי שום טקסט, הקדמה, הסבר או בלוק קוד לפניו או אחריו. התחל ישירות ב-{." + learning;
 
   const userMsg =
     `עסק: ${client.name}\nדומיין: ${client.domain}\nתחום/הערות: ${client.notes || "לא צוין"}\n` +
@@ -62,13 +67,19 @@ export async function prospectForClient(sb: any, clientId: number): Promise<numb
 
   const resp = await callClaudeAgent({
     model: DEFAULT_MODEL,
-    max_tokens: 3500,
+    max_tokens: 4000,
     system,
     messages: [{ role: "user", content: userMsg }],
-    tools: WEB_TOOLS,
-  });
+    tools: PROSPECT_TOOLS,
+  }, 5);
 
-  const parsed = extractJson(textOf(resp));
+  const raw = textOf(resp);
+  let parsed: any;
+  try {
+    parsed = extractJson(raw);
+  } catch {
+    throw new Error(`no valid JSON. raw: ${raw.slice(0, 500)}`);
+  }
   const list: any[] = Array.isArray(parsed) ? parsed : (parsed.prospects || []);
 
   const seen = new Set(existing);
