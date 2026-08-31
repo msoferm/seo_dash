@@ -479,6 +479,88 @@ export async function generateSeoRecommendations(clientId: number, from: string,
   return await invokeFn("seo-recommendations", { client_id: clientId, from, to });
 }
 
+// ===== Agents: link prospecting + outreach + SEO tools =====
+export type ProspectStatus = "new" | "approved" | "in_progress" | "done" | "rejected";
+export type ProspectType = "directory" | "blog" | "forum" | "mention" | "local" | "other";
+
+export interface LinkProspect {
+  id: number;
+  client_id: number;
+  type: ProspectType;
+  url: string;
+  title: string | null;
+  reason: string | null;
+  suggested_action: string | null;
+  contact: string | null;
+  score: number;
+  status: ProspectStatus;
+  notes: string | null;
+  created_at: string;
+}
+
+/** Run the research agent (web search) to find new link opportunities. */
+export async function runLinkProspector(clientId: number): Promise<{ created: number }> {
+  return await invokeFn("link-prospector", { client_id: clientId });
+}
+
+export async function listLinkProspects(clientId: number): Promise<LinkProspect[]> {
+  const { data, error } = await supabase
+    .from("link_prospects")
+    .select("*")
+    .eq("client_id", clientId)
+    .order("score", { ascending: false })
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function setProspectStatus(id: number, status: ProspectStatus): Promise<void> {
+  const { error } = await supabase.from("link_prospects").update({ status }).eq("id", id);
+  if (error) throw error;
+}
+
+export async function deleteProspect(id: number): Promise<void> {
+  const { error } = await supabase.from("link_prospects").delete().eq("id", id);
+  if (error) throw error;
+}
+
+const PROSPECT_TYPE_LABEL: Record<ProspectType, string> = {
+  directory: "אינדקס עסקים", blog: "פוסט בבלוג", forum: "פורום", mention: "אזכור מותג", local: "רישום מקומי", other: "אחר",
+};
+
+/** Approve a prospect into the manual link bank + mark it done. */
+export async function promoteProspectToBank(p: LinkProspect): Promise<void> {
+  await createReportLink(p.client_id, { link_type: PROSPECT_TYPE_LABEL[p.type] || "אחר", url: p.url, notes: p.title || null });
+  await setProspectStatus(p.id, "done");
+}
+
+/** Phase 2 — draft outreach for a prospect. */
+export async function draftOutreach(prospectId: number): Promise<{ subject: string; body: string }> {
+  return await invokeFn("outreach-draft", { prospect_id: prospectId });
+}
+
+// Phase 3 — SEO tools
+export interface AuditIssue { page: string; issue: string; severity: "high" | "medium" | "low"; fix: string }
+export interface SeoAudit { summary: string; issues: AuditIssue[]; pages_checked: number }
+export async function runSeoAudit(clientId: number): Promise<SeoAudit> {
+  return await invokeFn("seo-audit", { client_id: clientId });
+}
+
+export interface ContentBrief {
+  keyword: string;
+  suggested_title: string;
+  search_intent: string;
+  outline: string[];
+  questions: string[];
+  entities: string[];
+  internal_links: string;
+  word_count: string;
+  notes: string;
+}
+export async function generateContentBrief(clientId: number, keyword: string): Promise<ContentBrief> {
+  return await invokeFn("content-brief", { client_id: clientId, keyword });
+}
+
 /**
  * Sync GSC + GA4 for an exact period so the report reflects real, current numbers.
  * Best-effort per source — one failing shouldn't block the other.
