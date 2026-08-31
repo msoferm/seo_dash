@@ -55,10 +55,11 @@ export async function callClaude(req: MessagesRequest): Promise<MessagesResponse
 
 export const DEFAULT_MODEL = Deno.env.get("CLAUDE_MODEL") || "claude-sonnet-4-6";
 
-/** Web search + web fetch server tools (Claude runs them on Anthropic's side). */
+/** Web search + web fetch server tools (Claude runs them on Anthropic's side).
+ *  Budgets kept modest so a single agent run stays under the 150s edge-function limit. */
 export const WEB_TOOLS = [
-  { type: "web_search_20260209", name: "web_search", max_uses: 8 },
-  { type: "web_fetch_20260209", name: "web_fetch", max_uses: 6 },
+  { type: "web_search_20260209", name: "web_search", max_uses: 4 },
+  { type: "web_fetch_20260209", name: "web_fetch", max_uses: 2 },
 ];
 
 export interface AgentRequest {

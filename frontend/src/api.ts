@@ -499,8 +499,8 @@ export interface LinkProspect {
   created_at: string;
 }
 
-/** Run the research agent (web search) to find new link opportunities. */
-export async function runLinkProspector(clientId: number): Promise<{ created: number }> {
+/** Kick off the research agent (runs in the background; poll the list for results). */
+export async function runLinkProspector(clientId: number): Promise<{ started: boolean }> {
   return await invokeFn("link-prospector", { client_id: clientId });
 }
 

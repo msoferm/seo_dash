@@ -121,8 +121,14 @@ export default function ProspectsPage() {
   const [filter, setFilter] = useState<ProspectStatus | "all">("all");
   const [outreach, setOutreach] = useState<LinkProspect | null>(null);
 
+  const [polling, setPolling] = useState(false);
   const { data: client } = useQuery({ queryKey: ["client", cid], queryFn: () => api.getClient(cid), enabled: !!cid });
-  const { data: prospects, isLoading } = useQuery({ queryKey: ["prospects", cid], queryFn: () => api.listLinkProspects(cid), enabled: !!cid });
+  const { data: prospects, isLoading } = useQuery({
+    queryKey: ["prospects", cid],
+    queryFn: () => api.listLinkProspects(cid),
+    enabled: !!cid,
+    refetchInterval: polling ? 12000 : false,
+  });
   const invalidate = () => qc.invalidateQueries({ queryKey: ["prospects", cid] });
 
   const [showPrefs, setShowPrefs] = useState(false);
@@ -133,7 +139,14 @@ export default function ProspectsPage() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["client", cid] }); setShowPrefs(false); },
   });
 
-  const run = useMutation({ mutationFn: () => api.runLinkProspector(cid), onSuccess: invalidate });
+  const run = useMutation({
+    mutationFn: () => api.runLinkProspector(cid),
+    onSuccess: () => {
+      setPolling(true);
+      setTimeout(() => setPolling(false), 210000); // poll ~3.5 min while the agent works
+      invalidate();
+    },
+  });
   const status = useMutation({ mutationFn: ({ id, s }: { id: number; s: ProspectStatus }) => api.setProspectStatus(id, s), onSuccess: invalidate });
   const promote = useMutation({ mutationFn: (p: LinkProspect) => api.promoteProspectToBank(p), onSuccess: invalidate });
   const remove = useMutation({ mutationFn: (id: number) => api.deleteProspect(id), onSuccess: invalidate });
@@ -151,9 +164,9 @@ export default function ProspectsPage() {
         actions={
           <>
             <button className="btn-secondary" onClick={() => setShowPrefs((s) => !s)}><Settings2 size={18} /> העדפות</button>
-            <button className="btn-primary" onClick={() => run.mutate()} disabled={run.isPending}>
-              {run.isPending ? <Loader2 size={18} className="animate-spin" /> : <Radar size={18} />}
-              {run.isPending ? "הסוכן מחפש באינטרנט..." : "הרץ סוכן איתור"}
+            <button className="btn-primary" onClick={() => run.mutate()} disabled={run.isPending || polling}>
+              {run.isPending || polling ? <Loader2 size={18} className="animate-spin" /> : <Radar size={18} />}
+              {polling ? "הסוכן עובד ברקע..." : "הרץ סוכן איתור"}
             </button>
           </>
         }
@@ -179,7 +192,11 @@ export default function ProspectsPage() {
       )}
 
       {run.isError && <div className="mb-4 text-sm text-rose-600">שגיאה: {(run.error as any)?.message}</div>}
-      {run.isSuccess && <div className="mb-4 text-sm text-emerald-700">הסוכן הוסיף {(run.data as any).created} הזדמנויות חדשות.</div>}
+      {polling && (
+        <div className="mb-4 bg-brand-50 border border-brand-200 rounded-lg p-3 text-sm text-brand-700 flex items-center gap-2">
+          <Loader2 size={16} className="animate-spin" /> הסוכן מחפש באינטרנט ברקע — הזדמנויות חדשות יופיעו כאן מעצמן בתוך דקה-שתיים.
+        </div>
+      )}
 
       {isLoading ? (
         <Spinner />

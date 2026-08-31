@@ -52,7 +52,7 @@ export async function prospectForClient(sb: any, clientId: number): Promise<numb
     "לכל הזדמנות דרג עדיפות (score 0-100). אם מצאת עמוד קשר/אימייל — כלול אותו. " +
     "אחרי המחקר החזר אך ורק JSON: " +
     `{"prospects":[{"type":"directory|blog|forum|mention|local|other","url":"https://...","title":"...","reason":"...","suggested_action":"...","contact":"אימייל/עמוד קשר או null","score":0}]}. ` +
-    "החזר בין 8 ל-15 הזדמנויות. כתוב בעברית (למעט כתובות)." + learning;
+    "החזר בין 6 ל-10 הזדמנויות. כתוב בעברית (למעט כתובות)." + learning;
 
   const userMsg =
     `עסק: ${client.name}\nדומיין: ${client.domain}\nתחום/הערות: ${client.notes || "לא צוין"}\n` +
@@ -62,7 +62,7 @@ export async function prospectForClient(sb: any, clientId: number): Promise<numb
 
   const resp = await callClaudeAgent({
     model: DEFAULT_MODEL,
-    max_tokens: 4500,
+    max_tokens: 3500,
     system,
     messages: [{ role: "user", content: userMsg }],
     tools: WEB_TOOLS,
