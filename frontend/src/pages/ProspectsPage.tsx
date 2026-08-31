@@ -173,7 +173,7 @@ export default function ProspectsPage() {
       />
 
       <div className="mb-4 text-xs text-slate-500 flex items-center gap-1.5">
-        <CalendarClock size={14} /> הסוכן רץ גם אוטומטית כל שבוע (שני 06:00) — גם כשהמחשב כבוי. הזדמנויות חדשות יחכו כאן.
+        <CalendarClock size={14} /> הרצה ידנית בלבד (התזמון האוטומטי כבוי). לחץ "הרץ סוכן איתור" מתי שתרצה.
       </div>
 
       {/* Learning preferences */}
