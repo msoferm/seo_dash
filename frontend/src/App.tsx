@@ -1,5 +1,5 @@
 import { Routes, Route, NavLink, useParams, Link } from "react-router-dom";
-import { Users, BarChart3, Search, MessageSquare, HelpCircle, Home, LogOut, Target, ClipboardList, Lightbulb, FileText, Wand2, Radar, Stethoscope } from "lucide-react";
+import { Users, BarChart3, Search, MessageSquare, HelpCircle, Home, LogOut, Target, ClipboardList, Lightbulb, FileText, Wand2, Radar, Stethoscope, Newspaper } from "lucide-react";
 import { useAuth } from "./AuthContext";
 import ClientsPage from "./pages/ClientsPage";
 import ClientDashboard from "./pages/ClientDashboard";
@@ -12,6 +12,7 @@ import ReportView from "./pages/ReportView";
 import RecommendationsPage from "./pages/RecommendationsPage";
 import ProspectsPage from "./pages/ProspectsPage";
 import SeoToolsPage from "./pages/SeoToolsPage";
+import BlogPage from "./pages/BlogPage";
 import TasksPage from "./pages/TasksPage";
 import SuggestionsPage from "./pages/SuggestionsPage";
 import LoginPage from "./pages/LoginPage";
@@ -67,6 +68,9 @@ function Sidebar() {
           <NavLink to={`/clients/${cid}/seo-tools`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
             <Stethoscope size={18} /> כלי SEO
           </NavLink>
+          <NavLink to={`/clients/${cid}/blog`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
+            <Newspaper size={18} /> בלוג אוטומטי
+          </NavLink>
         </>
       )}
       <div className="mt-auto pt-4 border-t border-slate-100 text-xs text-slate-500">
@@ -114,6 +118,7 @@ export default function App() {
       <Route path="/clients/:clientId/recommendations" element={<Layout><RecommendationsPage /></Layout>} />
       <Route path="/clients/:clientId/prospects" element={<Layout><ProspectsPage /></Layout>} />
       <Route path="/clients/:clientId/seo-tools" element={<Layout><SeoToolsPage /></Layout>} />
+      <Route path="/clients/:clientId/blog" element={<Layout><BlogPage /></Layout>} />
     </Routes>
   );
 }

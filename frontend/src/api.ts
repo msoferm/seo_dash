@@ -553,6 +553,66 @@ export async function runSeoAudit(clientId: number): Promise<SeoAudit> {
   return await invokeFn("seo-audit", { client_id: clientId });
 }
 
+// ===== Auto-blog (WordPress) =====
+export interface ClientWordpress {
+  client_id: number;
+  site_url: string;
+  username: string;
+  mode: "publish" | "draft";
+  enabled: boolean;
+  last_published_at: string | null;
+  created_at: string;
+}
+export interface BlogPost {
+  id: number;
+  client_id: number;
+  title: string;
+  keyword: string | null;
+  wp_post_id: number | null;
+  url: string | null;
+  status: string | null;
+  error: string | null;
+  created_at: string;
+}
+
+/** Read the WP connection WITHOUT the app password. */
+export async function getWordpress(clientId: number): Promise<ClientWordpress | null> {
+  const { data, error } = await supabase
+    .from("client_wordpress")
+    .select("client_id, site_url, username, mode, enabled, last_published_at, created_at")
+    .eq("client_id", clientId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function connectWordpress(
+  clientId: number,
+  body: { site_url: string; username: string; app_password: string; mode: "publish" | "draft"; enabled?: boolean },
+): Promise<{ ok: boolean; wp_user: string; site: string }> {
+  return await invokeFn("wp-connect", { client_id: clientId, ...body });
+}
+
+export async function updateWordpressSettings(clientId: number, patch: { mode?: "publish" | "draft"; enabled?: boolean }): Promise<void> {
+  const { error } = await supabase.from("client_wordpress").update(patch).eq("client_id", clientId);
+  if (error) throw error;
+}
+
+export async function disconnectWordpress(clientId: number): Promise<void> {
+  const { error } = await supabase.from("client_wordpress").delete().eq("client_id", clientId);
+  if (error) throw error;
+}
+
+export async function publishBlogNow(clientId: number): Promise<{ title: string; url: string; status: string; keyword: string }> {
+  return await invokeFn("blog-publish", { client_id: clientId });
+}
+
+export async function listBlogPosts(clientId: number): Promise<BlogPost[]> {
+  const { data, error } = await supabase.from("blog_posts").select("*").eq("client_id", clientId).order("created_at", { ascending: false }).limit(50);
+  if (error) throw error;
+  return data || [];
+}
+
 export interface ContentBrief {
   keyword: string;
   suggested_title: string;
