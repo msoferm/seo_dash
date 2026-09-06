@@ -23,7 +23,7 @@ Deno.serve(async (req) => {
       "אתה אסטרטג תוכן SEO. עבור מילת המפתח, בדוק בחיפוש את התוצאות המובילות (SERP) כדי להבין כוונת חיפוש ופערים, " +
       "ואז הכן בריף תוכן מעשי לכותב. החזר אך ורק JSON: " +
       `{"suggested_title":"כותרת מוצעת","search_intent":"כוונת החיפוש (מידע/מסחרי/מקומי/ניווט)","outline":["H2/H3 מוצעים..."],"questions":["שאלות שהתוכן חייב לענות עליהן..."],"entities":["מונחים/ישויות לכלול..."],"internal_links":"רמז לקישורים פנימיים","word_count":"טווח אורך מומלץ","notes":"הערות/פערים מול המתחרים"}. ` +
-      "כתוב בעברית. היה קונקרטי ומבוסס על מה שראית בתוצאות.";
+      "כתוב בעברית. היה קונקרטי ומבוסס על מה שראית בתוצאות. קריטי: החזר אך ורק את אובייקט ה-JSON — התחל ישירות בתו { בלי שום טקסט, הקדמה או בלוק קוד לפניו או אחריו.";
 
     const userMsg =
       `עסק: ${client.name} (${client.domain}). הערות: ${client.notes || "—"}.\nמילת מפתח יעד: "${keyword.trim()}".\nהכן בריף תוכן.`;
@@ -36,11 +36,12 @@ Deno.serve(async (req) => {
       tools: WEB_TOOLS,
     });
 
+    const raw = textOf(resp);
     let b: any;
     try {
-      b = extractJson(textOf(resp));
+      b = extractJson(raw);
     } catch {
-      return errorResponse("לא ניתן היה לפענח את הבריף. נסה שוב.", 502);
+      return errorResponse(`לא ניתן היה לפענח את הבריף. פלט: ${raw.slice(0, 250)}`, 502);
     }
     return jsonResponse({
       keyword: keyword.trim(),

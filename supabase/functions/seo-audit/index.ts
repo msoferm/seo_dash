@@ -3,10 +3,11 @@
  * Technical on-page SEO audit: fetches the client's top pages and checks titles,
  * meta descriptions, H1s, content depth, schema, and obvious issues.
  * Returns { summary, issues: [{page, issue, severity, fix}] }.
+ * Uses a line format (not JSON) so a long list of Hebrew issues can't break parsing.
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
-import { callClaudeAgent, DEFAULT_MODEL, textOf, extractJson } from "../_shared/anthropic.ts";
+import { callClaudeAgent, DEFAULT_MODEL, textOf } from "../_shared/anthropic.ts";
 
 Deno.serve(async (req) => {
   const cors = handleCors(req);
@@ -19,7 +20,6 @@ Deno.serve(async (req) => {
     const { data: client } = await sb.from("clients").select("*").eq("id", client_id).maybeSingle();
     if (!client) return errorResponse("לקוח לא נמצא", 404);
 
-    // Top pages by clicks (real traffic) + homepage
     const { data: gscRows } = await sb.from("gsc_metrics").select("page, clicks").eq("client_id", client_id).not("page", "is", null);
     const agg = new Map<string, number>();
     for (const r of gscRows || []) agg.set(r.page, (agg.get(r.page) || 0) + (r.clicks || 0));
@@ -29,38 +29,40 @@ Deno.serve(async (req) => {
     if (urls.length === 0) return errorResponse("אין עמודים לבדיקה. סנכרן GSC תחילה.", 400);
 
     const system =
-      "אתה מבקר SEO טכני מקצועי. משוך את העמודים שסופקו (web_fetch) ובדוק לכל עמוד: " +
-      "כותרת SEO (title) — קיימת, אורך, ייחודיות; תיאור Meta — קיים, אורך, מזמין; כותרת H1 יחידה ורלוונטית; " +
-      "מבנה כותרות; עומק ואיכות תוכן; נתוני סכמה (structured data); תמונות עם alt; קישורים פנימיים; בעיות אינדוקס בולטות. " +
-      "לכל בעיה ציין חומרה: high/medium/low, ותיקון קונקרטי. " +
-      "אחרי הבדיקה החזר אך ורק JSON: " +
-      `{"summary":"סיכום קצר של מצב האתר","issues":[{"page":"url","issue":"תיאור הבעיה","severity":"high|medium|low","fix":"התיקון המומלץ"}]}. ` +
-      "כתוב בעברית (למעט כתובות/תגיות). התמקד בבעיות אמיתיות שמצאת בעמודים.";
+      "אתה מבקר SEO טכני מקצועי. משוך את העמודים שסופקו (web_fetch) ובדוק לכל עמוד: כותרת SEO (title) — קיימת, אורך, ייחודיות; " +
+      "תיאור Meta — קיים, אורך, מזמין; כותרת H1 יחידה ורלוונטית; מבנה כותרות; עומק ואיכות תוכן; נתוני סכמה; תמונות עם alt; קישורים פנימיים; בעיות אינדוקס בולטות. " +
+      "החזר בפורמט המדויק הבא בלבד, בלי JSON ובלי טקסט נוסף. שורה ראשונה:\n" +
+      "SUMMARY: <סיכום קצר של מצב האתר במשפט-שניים>\n" +
+      "ואז שורה לכל בעיה, בדיוק בפורמט (מופרד בתו |):\n" +
+      "ISSUE: <high|medium|low> | <כתובת העמוד> | <תיאור הבעיה> | <התיקון המומלץ>\n" +
+      "אל תשתמש בתו | בתוך הטקסט. כתוב בעברית (למעט כתובות/תגיות). רק בעיות אמיתיות שמצאת בעמודים.";
 
-    const userMsg =
-      `עסק: ${client.name} (${client.domain}).\nבדוק את העמודים הבאים:\n${urls.map((u) => `- ${u}`).join("\n")}`;
+    const userMsg = `עסק: ${client.name} (${client.domain}).\nבדוק את העמודים:\n${urls.map((u) => `- ${u}`).join("\n")}`;
 
     const resp = await callClaudeAgent({
       model: DEFAULT_MODEL,
-      max_tokens: 4500,
+      max_tokens: 8000,
       system,
       messages: [{ role: "user", content: userMsg }],
       tools: [{ type: "web_fetch_20250910", name: "web_fetch", max_uses: 5 }],
     });
 
-    let parsed: any;
-    try {
-      parsed = extractJson(textOf(resp));
-    } catch {
-      return errorResponse("לא ניתן היה לפענח את תוצאות האודיט. נסה שוב.", 502);
+    const text = textOf(resp);
+    const summary = (text.match(/SUMMARY:\s*(.+)/)?.[1] || "").trim();
+    const issues: any[] = [];
+    for (const line of text.split(/\r?\n/)) {
+      const m = line.match(/^\s*ISSUE:\s*(.+)$/);
+      if (!m) continue;
+      const parts = m[1].split("|").map((s) => s.trim());
+      if (parts.length < 4) continue;
+      const severity = ["high", "medium", "low"].includes(parts[0]) ? parts[0] : "medium";
+      issues.push({ severity, page: parts[1], issue: parts[2], fix: parts.slice(3).join(" | ") });
     }
-    const issues = (Array.isArray(parsed.issues) ? parsed.issues : []).map((i: any) => ({
-      page: String(i.page || ""),
-      issue: String(i.issue || ""),
-      severity: ["high", "medium", "low"].includes(i.severity) ? i.severity : "medium",
-      fix: String(i.fix || ""),
-    }));
-    return jsonResponse({ summary: String(parsed.summary || "").trim(), issues, pages_checked: urls.length });
+    if (!summary && issues.length === 0) {
+      return errorResponse(`האודיט לא החזיר תוצאות תקינות. פלט: ${text.slice(0, 250)}`, 502);
+    }
+
+    return jsonResponse({ summary, issues, pages_checked: urls.length });
   } catch (e) {
     return errorResponse(`שגיאה באודיט: ${(e as Error).message}`, 500);
   }
