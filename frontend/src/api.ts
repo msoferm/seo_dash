@@ -553,6 +553,11 @@ export async function runSeoAudit(clientId: number): Promise<SeoAudit> {
   return await invokeFn("seo-audit", { client_id: clientId });
 }
 
+/** Apply a single audited fix to the client's WordPress page (reversible via WP revisions). */
+export async function applyAuditFix(clientId: number, issue: AuditIssue): Promise<{ applied: boolean; target: string; note: string }> {
+  return await invokeFn("audit-fix", { client_id: clientId, page: issue.page, issue: issue.issue, fix: issue.fix });
+}
+
 // ===== Auto-blog (WordPress) =====
 export interface ClientWordpress {
   client_id: number;

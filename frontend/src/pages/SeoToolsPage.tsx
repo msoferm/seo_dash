@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Stethoscope, FileText, Loader2, Copy, Check } from "lucide-react";
+import { Stethoscope, FileText, Loader2, Copy, Check, Wrench, X } from "lucide-react";
 import * as api from "../api";
 import type { AuditIssue } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -18,6 +18,18 @@ export default function SeoToolsPage() {
   const { data: client } = useQuery({ queryKey: ["client", cid], queryFn: () => api.getClient(cid), enabled: !!cid });
 
   const audit = useMutation({ mutationFn: () => api.runSeoAudit(cid) });
+
+  // Per-issue fix state (issues have no stable id → key by page+issue text)
+  const keyOf = (i: AuditIssue) => `${i.page}#${i.issue}`;
+  const [fixState, setFixState] = useState<Record<string, { status: "fixing" | "fixed" | "rejected" | "error"; note?: string }>>({});
+  function doFix(i: AuditIssue) {
+    const k = keyOf(i);
+    setFixState((s) => ({ ...s, [k]: { status: "fixing" } }));
+    api.applyAuditFix(cid, i)
+      .then((r) => setFixState((s) => ({ ...s, [k]: { status: "fixed", note: r.note } })))
+      .catch((e) => setFixState((s) => ({ ...s, [k]: { status: "error", note: e?.message } })));
+  }
+  function doReject(i: AuditIssue) { setFixState((s) => ({ ...s, [keyOf(i)]: { status: "rejected" } })); }
 
   const [keyword, setKeyword] = useState("");
   const brief = useMutation({ mutationFn: (kw: string) => api.generateContentBrief(cid, kw) });
@@ -67,24 +79,46 @@ export default function SeoToolsPage() {
               <p className="text-slate-400 text-sm">לא נמצאו בעיות מהותיות.</p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-sm border-collapse min-w-[640px]">
+                <table className="w-full text-sm border-collapse min-w-[760px]">
                   <thead>
                     <tr className="bg-slate-50 text-slate-600">
                       <th className="p-2 font-medium">חומרה</th>
                       <th className="text-right p-2 font-medium">עמוד</th>
                       <th className="text-right p-2 font-medium">בעיה</th>
                       <th className="text-right p-2 font-medium">תיקון</th>
+                      <th className="p-2 font-medium">פעולה</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {issues.map((i, idx) => (
-                      <tr key={idx} className="border-b border-slate-100 align-top">
-                        <td className="p-2 text-center"><span className={`badge ${SEV_BADGE[i.severity]}`}>{SEV_LABEL[i.severity]}</span></td>
-                        <td className="text-right p-2"><a href={i.page} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline break-all text-xs">{i.page.replace(/^https?:\/\/[^/]+/, "") || i.page}</a></td>
-                        <td className="text-right p-2 text-slate-700">{i.issue}</td>
-                        <td className="text-right p-2 text-slate-600">{i.fix}</td>
-                      </tr>
-                    ))}
+                    {issues.map((i, idx) => {
+                      const st = fixState[keyOf(i)];
+                      return (
+                        <tr key={idx} className="border-b border-slate-100 align-top">
+                          <td className="p-2 text-center"><span className={`badge ${SEV_BADGE[i.severity]}`}>{SEV_LABEL[i.severity]}</span></td>
+                          <td className="text-right p-2"><a href={i.page} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline break-all text-xs">{i.page.replace(/^https?:\/\/[^/]+/, "") || i.page}</a></td>
+                          <td className="text-right p-2 text-slate-700">{i.issue}</td>
+                          <td className="text-right p-2 text-slate-600">{i.fix}</td>
+                          <td className="p-2 text-center whitespace-nowrap min-w-[150px]">
+                            {!st ? (
+                              <div className="flex items-center justify-center gap-1">
+                                <button className="btn-primary text-xs py-1 px-2" onClick={() => doFix(i)}><Wrench size={13} /> בצע</button>
+                                <button className="text-xs py-1 px-2 rounded text-slate-500 hover:bg-slate-100" onClick={() => doReject(i)}><X size={13} /> דחה</button>
+                              </div>
+                            ) : st.status === "fixing" ? (
+                              <span className="text-xs text-slate-500 inline-flex items-center gap-1"><Loader2 size={13} className="animate-spin" /> מבצע...</span>
+                            ) : st.status === "fixed" ? (
+                              <span className="text-xs text-emerald-600 inline-flex items-center gap-1" title={st.note}><Check size={13} /> תוקן</span>
+                            ) : st.status === "rejected" ? (
+                              <span className="text-xs text-slate-400">נדחה</span>
+                            ) : (
+                              <span className="text-xs text-rose-600 inline-flex items-center gap-1" title={st.note}>שגיאה
+                                <button className="underline" onClick={() => doFix(i)}>נסה שוב</button>
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
