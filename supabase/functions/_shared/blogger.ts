@@ -3,7 +3,7 @@
  * pick a topic from the client's SEO opportunities → write a full article with Claude
  * → publish to the client's WordPress → record it. Never repeats a recent keyword.
  */
-import { callClaude, DEFAULT_MODEL, textOf, extractJson } from "./anthropic.ts";
+import { callClaude, DEFAULT_MODEL, textOf } from "./anthropic.ts";
 
 function ymd(d: Date): string { return d.toISOString().slice(0, 10); }
 function normalizeSite(u: string): string {
@@ -15,14 +15,16 @@ function basicAuth(user: string, pass: string): string {
   return "Basic " + btoa(`${user}:${pass}`);
 }
 
-export interface PublishResult { title: string; url: string; status: string; keyword: string }
+export interface PublishResult { title: string; url: string; status: string; keyword: string; preview?: string }
 
-export async function publishForClient(sb: any, clientId: number): Promise<PublishResult> {
+export async function publishForClient(sb: any, clientId: number, opts: { dryRun?: boolean } = {}): Promise<PublishResult> {
   const { data: client } = await sb.from("clients").select("*").eq("id", clientId).maybeSingle();
   if (!client) throw new Error("לקוח לא נמצא");
   const { data: cw } = await sb.from("client_wordpress").select("*").eq("client_id", clientId).maybeSingle();
-  if (!cw) throw new Error("הלקוח לא מחובר ל-WordPress");
-  if (!cw.enabled) throw new Error("הבלוג האוטומטי כבוי ללקוח זה");
+  if (!opts.dryRun) {
+    if (!cw) throw new Error("הלקוח לא מחובר ל-WordPress");
+    if (!cw.enabled) throw new Error("הבלוג האוטומטי כבוי ללקוח זה");
+  }
 
   // ----- pick a topic (SEO opportunity, avoid recent) -----
   const to = ymd(new Date());
@@ -42,27 +44,32 @@ export async function publishForClient(sb: any, clientId: number): Promise<Publi
   if (!keyword) throw new Error("אין נושא זמין למאמר — הוסף מילות מפתח או סנכרן GSC");
 
   // ----- write the article -----
+  // Delimiter format (NOT JSON) — long HTML with quotes/newlines breaks JSON parsing.
   const system =
     "אתה כותב תוכן SEO מקצועי בעברית לבלוג עסקי. כתוב מאמר איכותי, מקורי, מועיל וקריא סביב מילת המפתח — " +
     "כותרת מושכת, מבנה עם כותרות H2/H3, פסקאות, ורשימות היכן שמתאים. 500-800 מילים לפחות. שלב את מילת המפתח באופן טבעי (לא ספאם). " +
     "אל תמציא עובדות, מספרים, מחירים או פרטים ספציפיים שאינך יכול לאמת. אם חסר מידע — כתוב באופן כללי ומקצועי. " +
-    "החזר אך ורק JSON תקין: {\"title\":\"כותרת\",\"html\":\"<h2>..</h2><p>..</p>\",\"excerpt\":\"תיאור מטא קצר (עד 155 תווים)\"}. " +
-    "ה-html הוא גוף המאמר בלבד (בלי <html>/<body>). התחל ישירות ב-{.";
+    "החזר בפורמט המדויק הבא ובלי שום טקסט נוסף לפני או אחרי:\n" +
+    "TITLE: <הכותרת בשורה אחת>\n" +
+    "EXCERPT: <תיאור מטא קצר בשורה אחת, עד 155 תווים>\n" +
+    "BODY:\n<גוף המאמר ב-HTML בלבד — h2/h3/p/ul, בלי <html> או <body>>";
   const userMsg =
     `עסק: ${client.name} (דומיין: ${client.domain}). הערות על העסק: ${client.notes || "—"}.\n` +
     `מילת מפתח יעד: "${keyword}".\nכתוב מאמר בלוג שיווקי-מקצועי סביב מילת המפתח.`;
 
-  const resp = await callClaude({ model: DEFAULT_MODEL, max_tokens: 4000, system, messages: [{ role: "user", content: userMsg }] });
-  let art: any;
-  try {
-    art = extractJson(textOf(resp));
-  } catch {
-    throw new Error("קלוד לא החזיר מאמר תקין. נסה שוב.");
+  const resp = await callClaude({ model: DEFAULT_MODEL, max_tokens: 8000, system, messages: [{ role: "user", content: userMsg }] });
+  const text = textOf(resp);
+  const title = (text.match(/TITLE:\s*(.+)/)?.[1] || "").trim();
+  const excerpt = (text.match(/EXCERPT:\s*(.+)/)?.[1] || "").trim();
+  let html = (text.match(/BODY:\s*([\s\S]+)$/)?.[1] || "").trim();
+  html = html.replace(/^```(?:html)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  if (!title || html.length < 40) {
+    throw new Error(`המאמר שנוצר לא תקין. פלט גולמי: ${text.slice(0, 300)}`);
   }
-  const title = String(art.title || "").trim();
-  const html = String(art.html || "").trim();
-  const excerpt = String(art.excerpt || "").trim();
-  if (!title || !html) throw new Error("המאמר שנוצר חסר כותרת או תוכן");
+
+  if (opts.dryRun) {
+    return { title, url: "(dry-run)", status: "dry", keyword, preview: html.slice(0, 400) };
+  }
 
   // ----- publish to WordPress -----
   const site = normalizeSite(cw.site_url);

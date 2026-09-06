@@ -18,7 +18,18 @@ Deno.serve(async (req) => {
   try {
     const secret = Deno.env.get("CRON_SECRET");
     if (!secret || req.headers.get("x-cron-secret") !== secret) return errorResponse("unauthorized", 401);
-    const { index = 0 } = await req.json().catch(() => ({}));
+    const body = await req.json().catch(() => ({}));
+    const { index = 0 } = body;
+
+    // Diagnostic: dry-run article generation (no publish) for one client.
+    if (body.debug && body.client_id) {
+      try {
+        const r = await publishForClient(serviceClient(), body.client_id, { dryRun: true });
+        return jsonResponse({ debug: true, ...r });
+      } catch (e) {
+        return jsonResponse({ debug: true, error: String((e as Error)?.message || e) });
+      }
+    }
 
     const work = (async () => {
       const sb = serviceClient();
