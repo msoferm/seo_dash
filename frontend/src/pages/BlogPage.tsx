@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Newspaper, Loader2, Plug, Check, ExternalLink, Trash2, Send, CalendarClock, AlertTriangle } from "lucide-react";
+import { Newspaper, Loader2, Plug, Check, ExternalLink, Trash2, Send, CalendarClock, AlertTriangle, GraduationCap, Save } from "lucide-react";
 import * as api from "../api";
 import type { BlogPost } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -70,9 +70,13 @@ export default function BlogPage() {
 
   const invalidate = () => { qc.invalidateQueries({ queryKey: ["wp", cid] }); qc.invalidateQueries({ queryKey: ["blog-posts", cid] }); };
 
-  const settings = useMutation({ mutationFn: (p: { mode?: "publish" | "draft"; enabled?: boolean }) => api.updateWordpressSettings(cid, p), onSuccess: () => qc.invalidateQueries({ queryKey: ["wp", cid] }) });
+  const settings = useMutation({ mutationFn: (p: { mode?: "publish" | "draft"; enabled?: boolean; blog_instructions?: string }) => api.updateWordpressSettings(cid, p), onSuccess: () => qc.invalidateQueries({ queryKey: ["wp", cid] }) });
   const disconnect = useMutation({ mutationFn: () => api.disconnectWordpress(cid), onSuccess: invalidate });
   const publishNow = useMutation({ mutationFn: () => api.publishBlogNow(cid), onSuccess: invalidate });
+
+  const [instructions, setInstructions] = useState("");
+  useEffect(() => { if (wp) setInstructions(wp.blog_instructions || ""); }, [wp]);
+  const saveInstructions = useMutation({ mutationFn: () => api.updateWordpressSettings(cid, { blog_instructions: instructions }), onSuccess: () => qc.invalidateQueries({ queryKey: ["wp", cid] }) });
 
   return (
     <div>
@@ -126,6 +130,19 @@ export default function BlogPage() {
                 נוצר: "{(publishNow.data as any).title}" (מילה: {(publishNow.data as any).keyword}) — <a href={(publishNow.data as any).url} target="_blank" rel="noreferrer" className="underline">צפה</a>
               </div>
             )}
+          </div>
+
+          {/* Instructions / continuous improvement */}
+          <div className="card mb-6">
+            <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-1"><GraduationCap size={18} className="text-brand-600" /> הנחיות לסוכן (תהליך שיפור מתמיד)</h3>
+            <p className="text-xs text-slate-500 mb-2">כתוב מה חשוב לדעת על הלקוח, על מה לכתוב ומה לתקן — הסוכן מכבד זאת בכל מאמר. לדוגמה: "העסק מתמחה ב-X ומשרת אזור Y", "טון מקצועי אך נגיש", "תמיד להוסיף קריאה לפעולה לפנייה", "אל תכתוב על נושא Z".</p>
+            <textarea className="input" rows={4} value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="הנחיות לסוכן..." />
+            <div className="flex items-center gap-2 mt-2">
+              <button className="btn-primary text-sm py-1.5" onClick={() => saveInstructions.mutate()} disabled={saveInstructions.isPending}>
+                {saveInstructions.isPending ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} שמור הנחיות
+              </button>
+              {saveInstructions.isSuccess && <span className="text-sm text-emerald-600">נשמר ✓</span>}
+            </div>
           </div>
 
           {/* History */}
