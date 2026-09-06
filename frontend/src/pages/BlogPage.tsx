@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Newspaper, Loader2, Plug, Check, ExternalLink, Trash2, Send, CalendarClock, AlertTriangle, GraduationCap, Save } from "lucide-react";
+import { Newspaper, Loader2, Plug, Check, ExternalLink, Trash2, Send, CalendarClock, AlertTriangle, GraduationCap, Save, Lightbulb, X } from "lucide-react";
 import * as api from "../api";
 import type { BlogPost } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -70,9 +70,12 @@ export default function BlogPage() {
 
   const invalidate = () => { qc.invalidateQueries({ queryKey: ["wp", cid] }); qc.invalidateQueries({ queryKey: ["blog-posts", cid] }); };
 
-  const settings = useMutation({ mutationFn: (p: { mode?: "publish" | "draft"; enabled?: boolean; blog_instructions?: string }) => api.updateWordpressSettings(cid, p), onSuccess: () => qc.invalidateQueries({ queryKey: ["wp", cid] }) });
+  const settings = useMutation({ mutationFn: (p: { mode?: "publish" | "draft"; enabled?: boolean; require_approval?: boolean; blog_instructions?: string }) => api.updateWordpressSettings(cid, p), onSuccess: () => qc.invalidateQueries({ queryKey: ["wp", cid] }) });
   const disconnect = useMutation({ mutationFn: () => api.disconnectWordpress(cid), onSuccess: invalidate });
   const publishNow = useMutation({ mutationFn: () => api.publishBlogNow(cid), onSuccess: invalidate });
+  const propose = useMutation({ mutationFn: () => api.proposeBlog(cid), onSuccess: invalidate });
+  const approve = useMutation({ mutationFn: (id: number) => api.approveBlogProposal(id), onSuccess: invalidate });
+  const reject = useMutation({ mutationFn: (id: number) => api.rejectBlogProposal(id), onSuccess: invalidate });
 
   const [instructions, setInstructions] = useState("");
   useEffect(() => { if (wp) setInstructions(wp.blog_instructions || ""); }, [wp]);
@@ -95,20 +98,31 @@ export default function BlogPage() {
                 <Plug size={18} className="text-emerald-600" /> מחובר: <a href={wp.site_url} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline">{wp.site_url}</a>
               </h3>
               <div className="flex items-center gap-2">
-                <button className="btn-primary" onClick={() => publishNow.mutate()} disabled={publishNow.isPending}>
-                  {publishNow.isPending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
-                  {publishNow.isPending ? "כותב ומפרסם..." : "כתוב ופרסם עכשיו"}
-                </button>
+                {wp.require_approval ? (
+                  <button className="btn-primary" onClick={() => propose.mutate()} disabled={propose.isPending}>
+                    {propose.isPending ? <Loader2 size={18} className="animate-spin" /> : <Lightbulb size={18} />}
+                    {propose.isPending ? "מכין הצעה..." : "הצע נושא"}
+                  </button>
+                ) : (
+                  <button className="btn-primary" onClick={() => publishNow.mutate()} disabled={publishNow.isPending}>
+                    {publishNow.isPending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+                    {publishNow.isPending ? "כותב ומפרסם..." : "כתוב ופרסם עכשיו"}
+                  </button>
+                )}
                 <button className="btn-secondary" onClick={() => { if (confirm("לנתק את WordPress?")) disconnect.mutate(); }}><Trash2 size={16} /> נתק</button>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-4 text-sm">
               <label className="flex items-center gap-2">
                 <input type="checkbox" checked={wp.enabled} className="h-4 w-4 accent-brand-600" onChange={(e) => settings.mutate({ enabled: e.target.checked })} />
-                <span className="text-slate-700">פרסום שבועי אוטומטי פעיל</span>
+                <span className="text-slate-700">אוטומציה שבועית פעילה</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={wp.require_approval} className="h-4 w-4 accent-brand-600" onChange={(e) => settings.mutate({ require_approval: e.target.checked })} />
+                <span className="text-slate-700">דרוש אישור לפני כתיבה (חצי-אוטומטי)</span>
               </label>
               <div className="flex items-center gap-2">
-                <span className="text-slate-500">מצב:</span>
+                <span className="text-slate-500">מצב פרסום:</span>
                 <select className="input py-1 text-sm w-40" value={wp.mode} onChange={(e) => settings.mutate({ mode: e.target.value as any })}>
                   <option value="publish">פרסום מלא (live)</option>
                   <option value="draft">טיוטה לאישור</option>
@@ -117,13 +131,16 @@ export default function BlogPage() {
               {wp.last_published_at && <span className="text-xs text-slate-400">פורסם לאחרונה: {new Date(wp.last_published_at).toLocaleString("he-IL")}</span>}
             </div>
             <div className="mt-3 text-xs text-slate-500 flex items-center gap-1.5">
-              <CalendarClock size={14} /> מאמר חדש עולה אוטומטית כל יום שני, מבוסס על הזדמנויות ה-SEO של הלקוח — גם כשהמחשב כבוי.
+              <CalendarClock size={14} /> {wp.require_approval
+                ? "כל יום שני הסוכן יציע נושא חדש (מבוסס ZEFO/GSC) שיחכה לאישורך כאן — גם כשהמחשב כבוי."
+                : "מאמר חדש עולה אוטומטית כל יום שני, מבוסס על הזדמנויות ה-SEO — גם כשהמחשב כבוי."}
             </div>
-            {wp.mode === "publish" && (
+            {!wp.require_approval && wp.mode === "publish" && (
               <div className="mt-2 text-xs text-amber-600 flex items-center gap-1.5">
-                <AlertTriangle size={14} /> מצב "פרסום מלא": המאמר עולה חי לאתר בלי בדיקה. אפשר לעבור ל"טיוטה" כדי לאשר לפני.
+                <AlertTriangle size={14} /> אוטומטי מלא + "פרסום מלא": המאמר נכתב ועולה חי בלי בדיקה.
               </div>
             )}
+            {propose.isError && <div className="mt-3 text-sm text-rose-600">{(propose.error as any)?.message}</div>}
             {publishNow.isError && <div className="mt-3 text-sm text-rose-600">{(publishNow.error as any)?.message}</div>}
             {publishNow.isSuccess && (
               <div className="mt-3 text-sm text-emerald-700">
@@ -145,14 +162,38 @@ export default function BlogPage() {
             </div>
           </div>
 
+          {/* Pending proposals */}
+          {(posts || []).some((p) => p.status === "proposed") && (
+            <div className="card mb-6 border-r-4 border-r-brand-400">
+              <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-3"><Lightbulb size={18} className="text-brand-600" /> הצעות ממתינות לאישור</h3>
+              <ul className="space-y-3">
+                {(posts || []).filter((p) => p.status === "proposed").map((p: BlogPost) => (
+                  <li key={p.id} className="border border-slate-200 rounded-lg p-3">
+                    <div className="font-medium text-slate-900">{p.title}</div>
+                    {p.keyword && <div className="text-xs text-slate-400 mb-1">מילת מפתח: {p.keyword}</div>}
+                    {p.reason && <div className="text-sm text-slate-600 whitespace-pre-wrap">{p.reason}</div>}
+                    <div className="flex items-center gap-2 mt-3">
+                      <button className="btn-primary text-sm py-1.5" onClick={() => approve.mutate(p.id)} disabled={approve.isPending}>
+                        {approve.isPending && approve.variables === p.id ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                        {approve.isPending && approve.variables === p.id ? "כותב ומפרסם..." : "אשר וכתוב"}
+                      </button>
+                      <button className="text-sm py-1.5 px-3 rounded-lg text-rose-600 hover:bg-rose-50" onClick={() => reject.mutate(p.id)}><X size={15} /> דחה</button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              {approve.isError && <div className="mt-3 text-sm text-rose-600">{(approve.error as any)?.message}</div>}
+            </div>
+          )}
+
           {/* History */}
           <div className="card">
             <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-3"><Newspaper size={18} /> היסטוריית מאמרים</h3>
-            {!posts || posts.length === 0 ? (
-              <p className="text-slate-400 text-sm">עדיין לא פורסמו מאמרים. לחץ "כתוב ופרסם עכשיו" או המתן לריצה השבועית.</p>
+            {!posts || posts.filter((p) => ["publish", "draft", "error"].includes(p.status || "")).length === 0 ? (
+              <p className="text-slate-400 text-sm">עדיין לא פורסמו מאמרים. {wp.require_approval ? 'לחץ "הצע נושא" לקבלת הצעה' : 'לחץ "כתוב ופרסם עכשיו"'} או המתן לריצה השבועית.</p>
             ) : (
               <ul className="divide-y divide-slate-100">
-                {posts.map((p: BlogPost) => (
+                {posts.filter((p) => ["publish", "draft", "error"].includes(p.status || "")).map((p: BlogPost) => (
                   <li key={p.id} className="py-3 flex items-start gap-3">
                     <span className={`badge ${STATUS_BADGE[p.status || ""] || "bg-slate-100 text-slate-600"} shrink-0 mt-0.5`}>{STATUS_LABEL[p.status || ""] || p.status}</span>
                     <div className="flex-1 min-w-0">

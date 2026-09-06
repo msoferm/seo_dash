@@ -560,6 +560,7 @@ export interface ClientWordpress {
   username: string;
   mode: "publish" | "draft";
   enabled: boolean;
+  require_approval: boolean;
   blog_instructions: string | null;
   last_published_at: string | null;
   created_at: string;
@@ -569,6 +570,7 @@ export interface BlogPost {
   client_id: number;
   title: string;
   keyword: string | null;
+  reason: string | null;
   wp_post_id: number | null;
   url: string | null;
   status: string | null;
@@ -580,7 +582,7 @@ export interface BlogPost {
 export async function getWordpress(clientId: number): Promise<ClientWordpress | null> {
   const { data, error } = await supabase
     .from("client_wordpress")
-    .select("client_id, site_url, username, mode, enabled, blog_instructions, last_published_at, created_at")
+    .select("client_id, site_url, username, mode, enabled, require_approval, blog_instructions, last_published_at, created_at")
     .eq("client_id", clientId)
     .maybeSingle();
   if (error) throw error;
@@ -594,8 +596,28 @@ export async function connectWordpress(
   return await invokeFn("wp-connect", { client_id: clientId, ...body });
 }
 
-export async function updateWordpressSettings(clientId: number, patch: { mode?: "publish" | "draft"; enabled?: boolean; blog_instructions?: string }): Promise<void> {
+export async function updateWordpressSettings(clientId: number, patch: { mode?: "publish" | "draft"; enabled?: boolean; require_approval?: boolean; blog_instructions?: string }): Promise<void> {
   const { error } = await supabase.from("client_wordpress").update(patch).eq("client_id", clientId);
+  if (error) throw error;
+}
+
+/** Semi-auto step 1: propose a topic + rationale (no article written yet). */
+export async function proposeBlog(clientId: number): Promise<{ keyword: string; title: string; reason: string }> {
+  return await invokeFn("blog-propose", { client_id: clientId });
+}
+
+/** Semi-auto step 2: approve a proposal → write & publish it. */
+export async function approveBlogProposal(proposalId: number): Promise<{ title: string; url: string; status: string; keyword: string }> {
+  return await invokeFn("blog-approve", { proposal_id: proposalId });
+}
+
+export async function rejectBlogProposal(id: number): Promise<void> {
+  const { error } = await supabase.from("blog_posts").update({ status: "rejected" }).eq("id", id);
+  if (error) throw error;
+}
+
+export async function deleteBlogPost(id: number): Promise<void> {
+  const { error } = await supabase.from("blog_posts").delete().eq("id", id);
   if (error) throw error;
 }
 

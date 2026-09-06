@@ -7,7 +7,7 @@
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { serviceClient } from "../_shared/supabase.ts";
-import { publishForClient } from "../_shared/blogger.ts";
+import { publishForClient, proposeForClient } from "../_shared/blogger.ts";
 
 // deno-lint-ignore no-explicit-any
 declare const EdgeRuntime: any;
@@ -21,6 +21,16 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const { index = 0 } = body;
 
+    // Diagnostic: generate a real proposal for one client.
+    if (body.propose && body.client_id) {
+      try {
+        const r = await proposeForClient(serviceClient(), body.client_id);
+        return jsonResponse({ propose: true, ...r });
+      } catch (e) {
+        return jsonResponse({ propose: true, error: String((e as Error)?.message || e) });
+      }
+    }
+
     // Diagnostic: dry-run article generation (no publish) for one client.
     if (body.debug && body.client_id) {
       try {
@@ -33,13 +43,16 @@ Deno.serve(async (req) => {
 
     const work = (async () => {
       const sb = serviceClient();
-      const { data: rows } = await sb.from("client_wordpress").select("client_id").eq("enabled", true).order("client_id");
+      const { data: rows } = await sb.from("client_wordpress").select("client_id, require_approval").eq("enabled", true).order("client_id");
       const list = rows || [];
       if (index >= list.length) return;
+      const c = list[index];
       try {
-        await publishForClient(sb, list[index].client_id);
+        // Semi-auto clients get a proposal (awaiting approval); full-auto clients publish.
+        if (c.require_approval) await proposeForClient(sb, c.client_id);
+        else await publishForClient(sb, c.client_id);
       } catch (e) {
-        console.error(`blog publish failed for client ${list[index].client_id}:`, (e as Error).message);
+        console.error(`blog job failed for client ${c.client_id}:`, (e as Error).message);
       }
       if (index + 1 < list.length) {
         await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/blog-cron`, {
