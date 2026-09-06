@@ -547,15 +547,45 @@ export async function draftOutreach(prospectId: number): Promise<{ subject: stri
 }
 
 // Phase 3 — SEO tools
-export interface AuditIssue { page: string; issue: string; severity: "high" | "medium" | "low"; fix: string }
-export interface SeoAudit { summary: string; issues: AuditIssue[]; pages_checked: number }
-export async function runSeoAudit(clientId: number): Promise<SeoAudit> {
+export type AuditSeverity = "high" | "medium" | "low";
+export type AuditStatus = "pending" | "applied" | "rejected";
+export interface AuditIssueRow {
+  id: number;
+  client_id: number;
+  page: string;
+  issue: string;
+  fix: string;
+  severity: AuditSeverity;
+  status: AuditStatus;
+  applied_note: string | null;
+  created_at: string;
+}
+
+/** Run the audit — it persists the findings and returns a summary. */
+export async function runSeoAudit(clientId: number): Promise<{ summary: string; count: number; pages_checked: number }> {
   return await invokeFn("seo-audit", { client_id: clientId });
 }
 
-/** Apply a single audited fix to the client's WordPress page (reversible via WP revisions). */
-export async function applyAuditFix(clientId: number, issue: AuditIssue): Promise<{ applied: boolean; target: string; note: string }> {
-  return await invokeFn("audit-fix", { client_id: clientId, page: issue.page, issue: issue.issue, fix: issue.fix });
+/** Persisted audit findings (survive refresh; each keeps its status until acted on). */
+export async function listAuditIssues(clientId: number): Promise<AuditIssueRow[]> {
+  const { data, error } = await supabase.from("audit_issues").select("*").eq("client_id", clientId).order("created_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+/** Apply a fix (optionally with a user modification). Reversible via WP revisions. */
+export async function applyAuditFix(issueId: number, modification?: string): Promise<{ applied: boolean; target: string; note: string }> {
+  return await invokeFn("audit-fix", { issue_id: issueId, modification: modification || undefined });
+}
+
+export async function rejectAuditIssue(id: number): Promise<void> {
+  const { error } = await supabase.from("audit_issues").update({ status: "rejected" }).eq("id", id);
+  if (error) throw error;
+}
+
+export async function resetAuditIssue(id: number): Promise<void> {
+  const { error } = await supabase.from("audit_issues").update({ status: "pending", applied_note: null }).eq("id", id);
+  if (error) throw error;
 }
 
 // ===== Auto-blog (WordPress) =====

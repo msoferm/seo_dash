@@ -62,7 +62,15 @@ Deno.serve(async (req) => {
       return errorResponse(`האודיט לא החזיר תוצאות תקינות. פלט: ${text.slice(0, 250)}`, 502);
     }
 
-    return jsonResponse({ summary, issues, pages_checked: urls.length });
+    // Persist: a fresh audit replaces the previous findings for this client.
+    await sb.from("audit_issues").delete().eq("client_id", client_id);
+    if (issues.length > 0) {
+      const rows = issues.map((i) => ({ client_id, page: i.page, issue: i.issue, fix: i.fix, severity: i.severity, status: "pending" }));
+      const { error } = await sb.from("audit_issues").insert(rows);
+      if (error) throw new Error(`insert failed: ${error.message}`);
+    }
+
+    return jsonResponse({ summary, count: issues.length, pages_checked: urls.length });
   } catch (e) {
     return errorResponse(`שגיאה באודיט: ${(e as Error).message}`, 500);
   }

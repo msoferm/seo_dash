@@ -40,8 +40,12 @@ Deno.serve(async (req) => {
   if (cors) return cors;
   try {
     const { sb } = await requireTeamMember(req);
-    const { client_id, page, issue, fix } = await req.json();
-    if (!client_id || !page || !issue) return errorResponse("חסרים פרטי התיקון", 400);
+    const { issue_id, modification } = await req.json();
+    if (!issue_id) return errorResponse("חסר issue_id", 400);
+
+    const { data: row } = await sb.from("audit_issues").select("*").eq("id", issue_id).maybeSingle();
+    if (!row) return errorResponse("הבעיה לא נמצאה", 404);
+    const client_id = row.client_id, page = row.page, issue = row.issue, fix = row.fix;
 
     const { data: cw } = await sb.from("client_wordpress").select("*").eq("client_id", client_id).maybeSingle();
     if (!cw) return errorResponse("הלקוח לא מחובר ל-WordPress", 400);
@@ -66,8 +70,9 @@ Deno.serve(async (req) => {
       "EXCERPT: <תיאור מטא מעודכן, או המילה KEEP אם אין שינוי>\n" +
       "CONTENT:\n<ה-HTML המלא של גוף העמוד לאחר התיקון — כל התוכן המקורי משומר, רק התיקון הוחל. אם אין צורך לשנות תוכן, כתוב KEEP>";
     const userMsg =
-      `בעיה שזוהתה: ${issue}\nתיקון מומלץ: ${fix || issue}\n\n` +
-      `כותרת נוכחית: ${curTitle}\nתיאור מטא נוכחי: ${curExcerpt || "(ריק)"}\n\nתוכן HTML נוכחי:\n${curContent.slice(0, 20000)}`;
+      `בעיה שזוהתה: ${issue}\nתיקון מומלץ: ${fix || issue}\n` +
+      (modification && modification.trim() ? `שינוי/הנחיה של המשתמש (יש לכבד): ${modification.trim()}\n` : "") +
+      `\nכותרת נוכחית: ${curTitle}\nתיאור מטא נוכחי: ${curExcerpt || "(ריק)"}\n\nתוכן HTML נוכחי:\n${curContent.slice(0, 20000)}`;
 
     const resp = await callClaude({ model: DEFAULT_MODEL, max_tokens: 8000, system, messages: [{ role: "user", content: userMsg }] });
     const text = textOf(resp);
@@ -78,7 +83,10 @@ Deno.serve(async (req) => {
     const update: any = {};
     if (newExcerpt && newExcerpt !== "KEEP") update.excerpt = newExcerpt;
     if (newContent && newContent !== "KEEP" && newContent.length > 40) update.content = newContent;
-    if (Object.keys(update).length === 0) return jsonResponse({ applied: false, target: page, note: "לא היה צורך בשינוי" });
+    if (Object.keys(update).length === 0) {
+      await sb.from("audit_issues").update({ status: "applied", applied_note: "לא היה צורך בשינוי" }).eq("id", issue_id);
+      return jsonResponse({ applied: false, target: page, note: "לא היה צורך בשינוי" });
+    }
 
     const up = await fetch(`${site}/wp-json/wp/v2/${target.type}/${target.id}`, {
       method: "POST", headers: { Authorization: auth, "Content-Type": "application/json" }, body: JSON.stringify(update),
@@ -92,7 +100,9 @@ Deno.serve(async (req) => {
     }
 
     const changed = [update.content ? "תוכן" : null, update.excerpt ? "תיאור מטא" : null].filter(Boolean).join(" + ");
-    return jsonResponse({ applied: true, target: page, note: `עודכן: ${changed}. ניתן לשחזר מהיסטוריית הגרסאות ב-WordPress.` });
+    const note = `עודכן: ${changed}. ניתן לשחזר מהיסטוריית הגרסאות ב-WordPress.`;
+    await sb.from("audit_issues").update({ status: "applied", applied_note: note }).eq("id", issue_id);
+    return jsonResponse({ applied: true, target: page, note });
   } catch (e) {
     return errorResponse(`שגיאה בביצוע התיקון: ${(e as Error).message}`, 500);
   }
