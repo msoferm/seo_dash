@@ -36,7 +36,6 @@ export default function ClientDashboard() {
   const [kpiRange, setKpiRange] = useState(() => rangeForDays(90));
   const [gscRange, setGscRange] = useState(() => rangeForDays(90));
   const [ga4Range, setGa4Range] = useState(() => rangeForDays(30));
-  const [convRange, setConvRange] = useState(() => rangeForDays(30));
   const [syncing, setSyncing] = useState(false);
 
   const { data, isLoading } = useQuery({
@@ -57,9 +56,10 @@ export default function ClientDashboard() {
     enabled: !!cid,
   });
 
+  // Shares kpiRange so the conversions breakdown always matches the "המרות" KPI above.
   const convSrc = useQuery({
-    queryKey: ["conv-src", cid, convRange],
-    queryFn: () => api.getConversionsSummary(cid, convRange.from, convRange.to),
+    queryKey: ["conv-src", cid, kpiRange],
+    queryFn: () => api.getConversionsSummary(cid, kpiRange.from, kpiRange.to),
     enabled: !!cid,
   });
 
@@ -381,7 +381,7 @@ export default function ClientDashboard() {
       <div className="card">
         <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
           <h3 className="font-semibold flex items-center gap-2"><CheckCircle2 size={18} /> מקורות התנועה וההמרות</h3>
-          <DateRangePicker value={convRange} onChange={setConvRange} />
+          <DateRangePicker value={kpiRange} onChange={setKpiRange} />
         </div>
         {convSrc.isLoading ? (
           <Spinner />
