@@ -592,6 +592,25 @@ export async function setRecommendationStatus(recId: number, status: RecStatus):
   if (error) throw error;
 }
 
+// ===== Site crawl =====
+export interface CrawledPage {
+  url: string; title: string | null; page_type: string | null; word_count: number | null;
+  meta_description: string | null; h1: string | null; images_missing_alt: number | null;
+  internal_links_out: number | null; last_full_crawl: string | null;
+}
+export async function runSiteCrawl(clientId: number): Promise<{ started: boolean }> {
+  return await invokeFn("site-crawl", { client_id: clientId });
+}
+export async function listCrawledPages(clientId: number): Promise<CrawledPage[]> {
+  const { data, error } = await supabase
+    .from("pages")
+    .select("url, title, page_type, word_count, meta_description, h1, images_missing_alt, internal_links_out, last_full_crawl")
+    .eq("client_id", clientId)
+    .not("last_full_crawl", "is", null);
+  if (error) throw error;
+  return (data || []) as CrawledPage[];
+}
+
 // ===== All-pages master =====
 export interface PageStat { page: string; clicks: number; impressions: number; ctr: number; position: number }
 export async function getPageStats(clientId: number, from: string, to: string): Promise<PageStat[]> {

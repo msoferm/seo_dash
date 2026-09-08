@@ -35,12 +35,14 @@ Deno.serve(async (req) => {
     const priorFrom = ymd(new Date(Date.now() - 2 * half * 30 * 86400000));
     const priorTo = recentFrom;
 
-    const [{ data: opps }, { data: pmap }, { data: actioned }, { data: oppsRecent }, { data: oppsPrior }] = await Promise.all([
+    const [{ data: opps }, { data: pmap }, { data: actioned }, { data: oppsRecent }, { data: oppsPrior }, { data: pageStats }, { data: pageLinks }] = await Promise.all([
       sb.rpc("gsc_query_opportunities", { p_client_id: client_id, p_from: from, p_to: to }),
       sb.rpc("gsc_page_query_map", { p_client_id: client_id, p_from: from, p_to: to }),
       sb.from("recommendations").select("dedupe_key").eq("client_id", client_id).neq("status", "pending"),
       sb.rpc("gsc_query_opportunities", { p_client_id: client_id, p_from: recentFrom, p_to: to }),
       sb.rpc("gsc_query_opportunities", { p_client_id: client_id, p_from: priorFrom, p_to: priorTo }),
+      sb.rpc("gsc_page_stats", { p_client_id: client_id, p_from: from, p_to: to }),
+      sb.from("page_links").select("to_url").eq("client_id", client_id),
     ]);
     const done = new Set((actioned || []).map((r: any) => r.dedupe_key).filter(Boolean));
 
@@ -142,6 +144,28 @@ Deno.serve(async (req) => {
           action: `לבדוק ולרענן את העמוד: עדכון תוכן, חיזוק סביב "${p.term}", ובדיקת מתחרים חדשים בתוצאות.`,
           potential: potentialOf(lostMonthly), est_visits: lostMonthly, effort: "medium", confidence: "medium",
           score: lost * 1.6,
+        });
+      }
+    }
+
+    // Internal linking: pages with traffic but few incoming internal links (needs a crawl)
+    const norm = (u: string) => (u || "").replace(/\/+$/, "").toLowerCase();
+    const incoming = new Map<string, number>();
+    for (const l of (pageLinks || []) as any[]) incoming.set(norm(l.to_url), (incoming.get(norm(l.to_url)) || 0) + 1);
+    if (incoming.size > 0) {
+      for (const ps of (pageStats || []) as any[]) {
+        if ((ps.impressions || 0) < 100) continue;
+        const inc = incoming.get(norm(ps.page)) || 0;
+        if (inc >= 2) continue;
+        const label = ps.page.replace(/^https?:\/\/[^/]+/, "") || ps.page;
+        push({
+          type: "internal_link", source: "crawl", page: ps.page, keyword: null,
+          title: `קישורים פנימיים: ${label}`,
+          opportunity: `העמוד מקבל ${ps.impressions} חשיפות אך יש לו רק ${inc} קישורים פנימיים נכנסים — חלש בהעברת סמכות פנימית.`,
+          whats_missing: "מעט קישורים פנימיים מעמודים אחרים באתר אל העמוד הזה.",
+          action: "לקשר לעמוד זה ממאמרים/עמודים רלוונטיים באתר, עם טקסט עוגן מדויק (למשל מאמר בנושא → עמוד השירות).",
+          potential: "medium", est_visits: Math.round((ps.impressions / m) * 0.01), effort: "low", confidence: "medium",
+          score: (ps.impressions || 0) * 0.12,
         });
       }
     }
