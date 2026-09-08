@@ -592,6 +592,24 @@ export async function setRecommendationStatus(recId: number, status: RecStatus):
   if (error) throw error;
 }
 
+// ===== Generic data uploads =====
+export interface UploadedDataset {
+  id: number; client_id: number; filename: string | null; source: string | null; data_type: string | null;
+  date_from: string | null; date_to: string | null; row_count: number; mapping: Record<string, string> | null; created_at: string;
+}
+export async function uploadData(clientId: number, filename: string, content: string): Promise<{ dataset_id: number; source: string; data_type: string; row_count: number; columns: Record<string, string>; date_from: string | null; date_to: string | null }> {
+  return await invokeFn("data-upload", { client_id: clientId, filename, content });
+}
+export async function listDatasets(clientId: number): Promise<UploadedDataset[]> {
+  const { data, error } = await supabase.from("uploaded_datasets").select("*").eq("client_id", clientId).order("created_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+export async function deleteDataset(id: number): Promise<void> {
+  const { error } = await supabase.from("uploaded_datasets").delete().eq("id", id);
+  if (error) throw error;
+}
+
 // ===== Site crawl =====
 export interface CrawledPage {
   url: string; title: string | null; page_type: string | null; word_count: number | null;
