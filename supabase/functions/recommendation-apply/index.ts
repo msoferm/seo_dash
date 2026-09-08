@@ -22,26 +22,38 @@ Deno.serve(async (req) => {
     const { data: r } = await sb.from("recommendations").select("*").eq("id", rec_id).maybeSingle();
     if (!r) return errorResponse("ההמלצה לא נמצאה", 404);
 
+    // Snapshot the page's recent clicks (impact baseline) before applying.
+    let clicksBefore: number | null = null;
+    if (r.page) {
+      try {
+        const to = new Date().toISOString().slice(0, 10);
+        const fromD = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+        const { data: ps } = await sb.rpc("gsc_page_stats", { p_client_id: r.client_id, p_from: fromD, p_to: to });
+        const norm = (u: string) => (u || "").replace(/\/+$/, "").toLowerCase();
+        clicksBefore = ((ps || []) as any[]).find((x) => norm(x.page) === norm(r.page))?.clicks ?? 0;
+      } catch { /* ignore */ }
+    }
+
     if (PAGE_EDIT.has(r.type)) {
       if (!r.page) return errorResponse("אין עמוד יעד להמלצה זו", 400);
       const { data: cw } = await sb.from("client_wordpress").select("*").eq("client_id", r.client_id).maybeSingle();
       if (!cw) return errorResponse("חבר WordPress כדי לבצע את התיקון", 400);
       const instruction = [r.action, r.example ? `דוגמה מאושרת ליישום: ${r.example}` : "", modification ? `הנחיה נוספת: ${modification}` : ""].filter(Boolean).join("\n");
       const res = await applyPageFix(cw, r.page, instruction);
-      await sb.from("recommendations").update({ status: "applied", applied_note: res.note, applied_at: new Date().toISOString() }).eq("id", rec_id);
+      await sb.from("recommendations").update({ status: "applied", applied_note: res.note, applied_at: new Date().toISOString(), clicks_before: clicksBefore }).eq("id", rec_id);
       return jsonResponse({ applied: res.applied, note: res.note });
     }
 
     if (r.type === "new_content") {
       await sb.from("blog_posts").insert({ client_id: r.client_id, keyword: r.keyword, title: `הצעת מאמר: ${r.keyword}`, reason: `מהמלצות: ${r.opportunity}`, status: "proposed" });
       const note = "נוצרה הצעת מאמר בטאב 'בלוג אוטומטי' — אשר שם כדי לכתוב ולפרסם.";
-      await sb.from("recommendations").update({ status: "done", applied_note: note, applied_at: new Date().toISOString() }).eq("id", rec_id);
+      await sb.from("recommendations").update({ status: "done", applied_note: note, applied_at: new Date().toISOString(), clicks_before: clicksBefore }).eq("id", rec_id);
       return jsonResponse({ applied: true, note });
     }
 
     // cannibalization / internal_link / performance_drop → manual
     const note = "סומן כבוצע — פעולה זו דורשת החלטה ידנית/רב-עמודית.";
-    await sb.from("recommendations").update({ status: "done", applied_note: note, applied_at: new Date().toISOString() }).eq("id", rec_id);
+    await sb.from("recommendations").update({ status: "done", applied_note: note, applied_at: new Date().toISOString(), clicks_before: clicksBefore }).eq("id", rec_id);
     return jsonResponse({ applied: true, note });
   } catch (e) {
     return errorResponse((e as Error).message, 500);

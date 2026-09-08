@@ -569,6 +569,7 @@ export interface Recommendation {
   example: string | null;
   applied_note: string | null;
   applied_at: string | null;
+  clicks_before: number | null;
   created_at: string;
 }
 
