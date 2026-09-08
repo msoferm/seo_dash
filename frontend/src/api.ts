@@ -591,6 +591,14 @@ export async function setRecommendationStatus(recId: number, status: RecStatus):
   if (error) throw error;
 }
 
+// ===== All-pages master =====
+export interface PageStat { page: string; clicks: number; impressions: number; ctr: number; position: number }
+export async function getPageStats(clientId: number, from: string, to: string): Promise<PageStat[]> {
+  const { data, error } = await supabase.rpc("gsc_page_stats", { p_client_id: clientId, p_from: from, p_to: to });
+  if (error) throw error;
+  return (data || []) as PageStat[];
+}
+
 // Phase 3 — SEO tools
 export type AuditSeverity = "high" | "medium" | "low";
 export type AuditStatus = "pending" | "applied" | "rejected";

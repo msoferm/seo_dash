@@ -29,10 +29,18 @@ Deno.serve(async (req) => {
     const to = ymd(new Date());
     const from = ymd(new Date(Date.now() - m * 30 * 86400000));
 
-    const [{ data: opps }, { data: pmap }, { data: actioned }] = await Promise.all([
+    // Two sub-periods for drop detection (recent half vs prior half)
+    const half = Math.max(1, Math.round(m / 2));
+    const recentFrom = ymd(new Date(Date.now() - half * 30 * 86400000));
+    const priorFrom = ymd(new Date(Date.now() - 2 * half * 30 * 86400000));
+    const priorTo = recentFrom;
+
+    const [{ data: opps }, { data: pmap }, { data: actioned }, { data: oppsRecent }, { data: oppsPrior }] = await Promise.all([
       sb.rpc("gsc_query_opportunities", { p_client_id: client_id, p_from: from, p_to: to }),
       sb.rpc("gsc_page_query_map", { p_client_id: client_id, p_from: from, p_to: to }),
       sb.from("recommendations").select("dedupe_key").eq("client_id", client_id).neq("status", "pending"),
+      sb.rpc("gsc_query_opportunities", { p_client_id: client_id, p_from: recentFrom, p_to: to }),
+      sb.rpc("gsc_query_opportunities", { p_client_id: client_id, p_from: priorFrom, p_to: priorTo }),
     ]);
     const done = new Set((actioned || []).map((r: any) => r.dedupe_key).filter(Boolean));
 
@@ -113,6 +121,27 @@ Deno.serve(async (req) => {
           action: `ליצור עמוד/מאמר ייעודי ומקיף ל"${term}" (או להרחיב עמוד קרוב אם קיים).`,
           potential: potentialOf(est), est_visits: est, effort: "high", confidence: "low",
           score: est * 0.8,
+        });
+      }
+    }
+
+    // Performance drops: recent half vs prior half
+    const recentByTerm = new Map<string, any>();
+    for (const r of (oppsRecent || []) as any[]) recentByTerm.set(r.term, r);
+    for (const p of (oppsPrior || []) as any[]) {
+      const rec = recentByTerm.get(p.term) || { clicks: 0, impressions: 0, position: 0 };
+      if (p.clicks >= 5 && rec.clicks < p.clicks * 0.6) {
+        const lost = p.clicks - rec.clicks;
+        const lostMonthly = Math.round(lost / half);
+        const page = termBestPage.get(p.term)?.page || null;
+        push({
+          type: "performance_drop", source: "gsc", page, keyword: p.term,
+          title: `ירידת ביצועים: ${p.term}`,
+          opportunity: `"${p.term}" ירד מ-${p.clicks} ל-${rec.clicks} קליקים (מיקום ${p.position} → ${rec.position || "לא מדורג"}) בין התקופות.`,
+          whats_missing: "העמוד איבד תנועה — ייתכן ירידת מיקום, תוכן שהתיישן, או תחרות חדשה.",
+          action: `לבדוק ולרענן את העמוד: עדכון תוכן, חיזוק סביב "${p.term}", ובדיקת מתחרים חדשים בתוצאות.`,
+          potential: potentialOf(lostMonthly), est_visits: lostMonthly, effort: "medium", confidence: "medium",
+          score: lost * 1.6,
         });
       }
     }
