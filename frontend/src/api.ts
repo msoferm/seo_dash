@@ -915,6 +915,7 @@ export async function getDashboard(clientId: number): Promise<DashboardData> {
       .from("zefo_keywords")
       .select("zefo_keyword_id, keyword, ranking, previous_ranking")
       .eq("client_id", clientId)
+      .gt("ranking", 0) // exclude -1 / null (= not ranked in the first pages), which sort first
       .order("ranking", { ascending: true, nullsFirst: false })
       .limit(10),
     supabase
