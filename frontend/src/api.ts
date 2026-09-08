@@ -546,6 +546,51 @@ export async function draftOutreach(prospectId: number): Promise<{ subject: stri
   return await invokeFn("outreach-draft", { prospect_id: prospectId });
 }
 
+// ===== Unified recommendation engine =====
+export type RecType = "title_meta" | "improve_page" | "add_keywords" | "new_content" | "cannibalization" | "internal_link" | "performance_drop" | "technical";
+export type RecStatus = "pending" | "applied" | "ignored" | "done";
+export interface Recommendation {
+  id: number;
+  client_id: number;
+  type: RecType;
+  source: string | null;
+  page: string | null;
+  keyword: string | null;
+  title: string;
+  opportunity: string | null;
+  whats_missing: string | null;
+  action: string | null;
+  potential: "high" | "medium" | "low";
+  est_visits: number;
+  effort: "low" | "medium" | "high";
+  confidence: string;
+  score: number;
+  status: RecStatus;
+  example: string | null;
+  applied_note: string | null;
+  applied_at: string | null;
+  created_at: string;
+}
+
+export async function generateRecommendations(clientId: number, months: 3 | 6 | 12): Promise<{ count: number; months: number }> {
+  return await invokeFn("recommendations-generate", { client_id: clientId, months });
+}
+export async function listRecommendations(clientId: number): Promise<Recommendation[]> {
+  const { data, error } = await supabase.from("recommendations").select("*").eq("client_id", clientId).order("score", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+export async function generateRecExample(recId: number): Promise<{ example: string }> {
+  return await invokeFn("recommendation-example", { rec_id: recId });
+}
+export async function applyRecommendation(recId: number, modification?: string): Promise<{ applied: boolean; note: string }> {
+  return await invokeFn("recommendation-apply", { rec_id: recId, modification: modification || undefined });
+}
+export async function setRecommendationStatus(recId: number, status: RecStatus): Promise<void> {
+  const { error } = await supabase.from("recommendations").update({ status }).eq("id", recId);
+  if (error) throw error;
+}
+
 // Phase 3 — SEO tools
 export type AuditSeverity = "high" | "medium" | "low";
 export type AuditStatus = "pending" | "applied" | "rejected";

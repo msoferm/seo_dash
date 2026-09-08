@@ -1,5 +1,5 @@
 import { Routes, Route, NavLink, useParams, Link } from "react-router-dom";
-import { Users, BarChart3, Search, MessageSquare, HelpCircle, Home, LogOut, Target, ClipboardList, Lightbulb, FileText, Wand2, Radar, Stethoscope, Newspaper } from "lucide-react";
+import { Users, BarChart3, Search, MessageSquare, HelpCircle, Home, LogOut, Target, ClipboardList, Lightbulb, FileText, Wand2, Radar, Stethoscope, Newspaper, Sparkles } from "lucide-react";
 import { useAuth } from "./AuthContext";
 import ClientsPage from "./pages/ClientsPage";
 import ClientDashboard from "./pages/ClientDashboard";
@@ -10,6 +10,7 @@ import RankingsPage from "./pages/RankingsPage";
 import ReportsPage from "./pages/ReportsPage";
 import ReportView from "./pages/ReportView";
 import RecommendationsPage from "./pages/RecommendationsPage";
+import RecEnginePage from "./pages/RecEnginePage";
 import ProspectsPage from "./pages/ProspectsPage";
 import SeoToolsPage from "./pages/SeoToolsPage";
 import BlogPage from "./pages/BlogPage";
@@ -58,6 +59,9 @@ function Sidebar() {
           </NavLink>
           <NavLink to={`/clients/${cid}/reports`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
             <FileText size={18} /> דוחות קידום
+          </NavLink>
+          <NavLink to={`/clients/${cid}/engine`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
+            <Sparkles size={18} /> מנוע המלצות
           </NavLink>
           <NavLink to={`/clients/${cid}/recommendations`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
             <Wand2 size={18} /> המלצות קלוד
@@ -115,6 +119,7 @@ export default function App() {
       <Route path="/clients/:clientId/tasks" element={<Layout><TasksPage /></Layout>} />
       <Route path="/clients/:clientId/reports" element={<Layout><ReportsPage /></Layout>} />
       <Route path="/clients/:clientId/reports/:reportId" element={<Layout><ReportView /></Layout>} />
+      <Route path="/clients/:clientId/engine" element={<Layout><RecEnginePage /></Layout>} />
       <Route path="/clients/:clientId/recommendations" element={<Layout><RecommendationsPage /></Layout>} />
       <Route path="/clients/:clientId/prospects" element={<Layout><ProspectsPage /></Layout>} />
       <Route path="/clients/:clientId/seo-tools" element={<Layout><SeoToolsPage /></Layout>} />
