@@ -40,6 +40,10 @@ Deno.serve(async (req) => {
       if (!cw) return errorResponse("חבר WordPress כדי לבצע את התיקון", 400);
       const instruction = [r.action, r.example ? `דוגמה מאושרת ליישום: ${r.example}` : "", modification ? `הנחיה נוספת: ${modification}` : ""].filter(Boolean).join("\n");
       const res = await applyPageFix(cw, r.page, instruction);
+      if (!res.applied) {
+        // Nothing actually changed on the live site — stay honest, leave it actionable.
+        return errorResponse(res.note, 422);
+      }
       await sb.from("recommendations").update({ status: "applied", applied_note: res.note, applied_at: new Date().toISOString(), clicks_before: clicksBefore }).eq("id", rec_id);
       return jsonResponse({ applied: res.applied, note: res.note });
     }
