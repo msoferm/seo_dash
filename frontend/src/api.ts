@@ -11,6 +11,7 @@ export interface Client {
   created_at: string;
   google_token_json: string | null;
   link_prefs?: string | null;
+  forum_prefs?: string | null;
 }
 
 export interface Keyword {
@@ -544,6 +545,86 @@ export async function promoteProspectToBank(p: LinkProspect): Promise<void> {
 /** Phase 2 — draft outreach for a prospect. */
 export async function draftOutreach(prospectId: number): Promise<{ subject: string; body: string }> {
   return await invokeFn("outreach-draft", { prospect_id: prospectId });
+}
+
+// ===== Forum outreach (URL-specific link finding) =====
+export interface ForumSite {
+  id: number;
+  client_id: number;
+  url: string;
+  name: string | null;
+  max_pages: number;
+  max_threads: number;
+  active: boolean;
+  last_scanned_at: string | null;
+  created_at: string;
+}
+export interface ForumLead {
+  id: number;
+  client_id: number;
+  forum_site_id: number | null;
+  thread_url: string;
+  thread_title: string | null;
+  question: string | null;
+  suggested_reply: string | null;
+  target_url: string | null;
+  score: number;
+  status: ProspectStatus;
+  notes: string | null;
+  created_at: string;
+}
+
+export async function listForumSites(clientId: number): Promise<ForumSite[]> {
+  const { data, error } = await supabase.from("forum_sites").select("*")
+    .eq("client_id", clientId).order("created_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+export async function createForumSite(clientId: number, body: { url: string; name?: string | null; max_pages?: number; max_threads?: number }): Promise<ForumSite> {
+  const { data, error } = await supabase.from("forum_sites")
+    .insert({ client_id: clientId, ...body }).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function updateForumSite(id: number, body: Partial<Pick<ForumSite, "url" | "name" | "max_pages" | "max_threads" | "active">>): Promise<void> {
+  const { error } = await supabase.from("forum_sites").update(body).eq("id", id);
+  if (error) throw error;
+}
+export async function deleteForumSite(id: number): Promise<void> {
+  const { error } = await supabase.from("forum_sites").delete().eq("id", id);
+  if (error) throw error;
+}
+
+/** Kick off the forum scan (runs in the background; poll the leads list for results). */
+export async function runForumScan(clientId: number): Promise<{ started: boolean; remaining: number; note?: string }> {
+  return await invokeFn("forum-scan", { client_id: clientId });
+}
+
+export async function listForumLeads(clientId: number): Promise<ForumLead[]> {
+  const { data, error } = await supabase.from("forum_leads").select("*")
+    .eq("client_id", clientId)
+    .order("score", { ascending: false })
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+export async function setForumLeadStatus(id: number, status: ProspectStatus): Promise<void> {
+  const { error } = await supabase.from("forum_leads").update({ status }).eq("id", id);
+  if (error) throw error;
+}
+export async function updateForumLead(id: number, body: Partial<Pick<ForumLead, "suggested_reply" | "target_url" | "notes" | "status">>): Promise<void> {
+  const { error } = await supabase.from("forum_leads").update(body).eq("id", id);
+  if (error) throw error;
+}
+export async function deleteForumLead(id: number): Promise<void> {
+  const { error } = await supabase.from("forum_leads").delete().eq("id", id);
+  if (error) throw error;
+}
+
+/** Per-client guidance the forum agent always respects. */
+export async function updateClientForumPrefs(clientId: number, prefs: string): Promise<void> {
+  const { error } = await supabase.from("clients").update({ forum_prefs: prefs }).eq("id", clientId);
+  if (error) throw error;
 }
 
 // ===== Unified recommendation engine =====

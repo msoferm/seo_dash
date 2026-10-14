@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Radar, Loader2, ExternalLink, Trash2, Check, Mail, Copy, X, ThumbsUp, Settings2, CalendarClock, Save } from "lucide-react";
+import { Radar, Loader2, ExternalLink, Trash2, Check, Mail, Copy, X, ThumbsUp, Settings2, CalendarClock, Save, MessagesSquare } from "lucide-react";
 import * as api from "../api";
 import type { LinkProspect, ProspectStatus, ProspectType } from "../api";
 import PageHeader from "../components/PageHeader";
 import Spinner from "../components/Spinner";
+import ForumOutreachTab from "./ForumOutreachTab";
 
 const TYPE_LABEL: Record<ProspectType, string> = {
   directory: "אינדקס עסקים", blog: "בלוג / אורח", forum: "פורום", mention: "אזכור מותג", local: "רישום מקומי", other: "אחר",
@@ -114,9 +115,7 @@ function ProspectCard({ p, onStatus, onPromote, onDelete, onOutreach }: {
   );
 }
 
-export default function ProspectsPage() {
-  const { clientId } = useParams();
-  const cid = Number(clientId);
+function AutoProspectsTab({ cid }: { cid: number }) {
   const qc = useQueryClient();
   const [filter, setFilter] = useState<ProspectStatus | "all">("all");
   const [outreach, setOutreach] = useState<LinkProspect | null>(null);
@@ -158,22 +157,17 @@ export default function ProspectsPage() {
 
   return (
     <div>
-      <PageHeader
-        title="איתור קישורים"
-        subtitle={client ? `${client.name} · סוכן מחקר שמוצא הזדמנויות קישור (לאישור ידני)` : "סוכן מחקר להזדמנויות קישור"}
-        actions={
-          <>
-            <button className="btn-secondary" onClick={() => setShowPrefs((s) => !s)}><Settings2 size={18} /> העדפות</button>
-            <button className="btn-primary" onClick={() => run.mutate()} disabled={run.isPending || polling}>
-              {run.isPending || polling ? <Loader2 size={18} className="animate-spin" /> : <Radar size={18} />}
-              {polling ? "הסוכן עובד ברקע..." : "הרץ סוכן איתור"}
-            </button>
-          </>
-        }
-      />
-
-      <div className="mb-4 text-xs text-slate-500 flex items-center gap-1.5">
-        <CalendarClock size={14} /> הרצה ידנית בלבד (התזמון האוטומטי כבוי). לחץ "הרץ סוכן איתור" מתי שתרצה.
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+        <p className="text-xs text-slate-500 flex items-center gap-1.5">
+          <CalendarClock size={14} /> הרצה ידנית בלבד (התזמון האוטומטי כבוי). לחץ "הרץ סוכן איתור" מתי שתרצה.
+        </p>
+        <div className="flex gap-2">
+          <button className="btn-secondary" onClick={() => setShowPrefs((s) => !s)}><Settings2 size={18} /> העדפות</button>
+          <button className="btn-primary" onClick={() => run.mutate()} disabled={run.isPending || polling}>
+            {run.isPending || polling ? <Loader2 size={18} className="animate-spin" /> : <Radar size={18} />}
+            {polling ? "הסוכן עובד ברקע..." : "הרץ סוכן איתור"}
+          </button>
+        </div>
       </div>
 
       {/* Learning preferences */}
@@ -236,6 +230,34 @@ export default function ProspectsPage() {
       )}
 
       {outreach && <OutreachModal prospect={outreach} onClose={() => setOutreach(null)} />}
+    </div>
+  );
+}
+
+export default function ProspectsPage() {
+  const { clientId } = useParams();
+  const cid = Number(clientId);
+  const [tab, setTab] = useState<"auto" | "forums">("auto");
+  const { data: client } = useQuery({ queryKey: ["client", cid], queryFn: () => api.getClient(cid), enabled: !!cid });
+
+  const tabBtn = (key: "auto" | "forums", label: string, Icon: typeof Radar) => (
+    <button onClick={() => setTab(key)}
+      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === key ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}>
+      <Icon size={16} /> {label}
+    </button>
+  );
+
+  return (
+    <div>
+      <PageHeader
+        title="איתור קישורים"
+        subtitle={client ? `${client.name} · הזדמנויות קישור לאישור ידני` : "הזדמנויות קישור"}
+      />
+      <div className="flex gap-2 mb-6 border-b border-slate-200 pb-3">
+        {tabBtn("auto", "הזדמנויות אוטומטיות", Radar)}
+        {tabBtn("forums", "פורומים ותגובות", MessagesSquare)}
+      </div>
+      {tab === "auto" ? <AutoProspectsTab cid={cid} /> : <ForumOutreachTab cid={cid} client={client} />}
     </div>
   );
 }
