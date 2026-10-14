@@ -48,12 +48,18 @@ function SitesManager({ cid }: { cid: number }) {
   const toggle = useMutation({ mutationFn: (s: ForumSite) => api.updateForumSite(s.id, { active: !s.active }), onSuccess: invalidate });
   const remove = useMutation({ mutationFn: (id: number) => api.deleteForumSite(id), onSuccess: invalidate });
 
+  const [discUrl, setDiscUrl] = useState("");
+  const discover = useMutation({
+    mutationFn: () => api.discoverSubforums(cid, discUrl.trim(), true),
+    onSuccess: () => { setDiscUrl(""); invalidate(); },
+  });
+
   return (
     <div className="card mb-6">
       <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-3"><Settings2 size={18} className="text-brand-600" /> אתרים / פורומים לסריקה</h3>
 
-      <div className="flex flex-wrap gap-2 mb-4">
-        <input className="input flex-1 min-w-[260px]" placeholder="כתובת הפורום (https://...)" value={url}
+      <div className="flex flex-wrap gap-2 mb-3">
+        <input className="input flex-1 min-w-[260px]" placeholder="כתובת פורום ספציפי (https://...)" value={url}
           onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && url.trim()) add.mutate(); }} />
         <input className="input w-48" placeholder="שם (אופציונלי)" value={name} onChange={(e) => setName(e.target.value)} />
         <button className="btn-primary shrink-0" onClick={() => add.mutate()} disabled={add.isPending || !url.trim()}>
@@ -61,6 +67,24 @@ function SitesManager({ cid }: { cid: number }) {
         </button>
       </div>
       {add.isError && <div className="text-sm text-rose-600 mb-2">{(add.error as any)?.message}</div>}
+
+      {/* Auto-discover sub-forums from a parent board (e.g. a Prog index page) */}
+      <div className="bg-slate-50 rounded-lg p-3 mb-4">
+        <div className="text-xs text-slate-600 mb-2">סיווג אוטומטי: הדבק כתובת של עמוד פורום ראשי (שמכיל קישורים לתת-פורומים), והמערכת תזהה את כל תת-הפורומים ותוסיף אותם בנפרד.</div>
+        <div className="flex flex-wrap gap-2">
+          <input className="input flex-1 min-w-[260px]" placeholder="כתובת פורום ראשי לגילוי תת-פורומים (https://...)" value={discUrl}
+            onChange={(e) => setDiscUrl(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && discUrl.trim()) discover.mutate(); }} />
+          <button className="btn-secondary shrink-0" onClick={() => discover.mutate()} disabled={discover.isPending || !discUrl.trim()}>
+            {discover.isPending ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />} גלה והוסף תת-פורומים
+          </button>
+        </div>
+        {discover.isError && <div className="text-sm text-rose-600 mt-2">{(discover.error as any)?.message}</div>}
+        {discover.isSuccess && (
+          <div className="text-sm text-emerald-700 mt-2">
+            {discover.data.added > 0 ? `נוספו ${discover.data.added} תת-פורומים.` : (discover.data.note || `נמצאו ${discover.data.found.length} — כולם כבר קיימים.`)}
+          </div>
+        )}
+      </div>
 
       {isLoading ? <Spinner /> : (sites || []).length === 0 ? (
         <p className="text-slate-400 text-sm">עדיין לא הוזנו אתרים. הוסף פורומים שבהם אתם רשומים ופעילים.</p>
@@ -93,6 +117,9 @@ function SitesManager({ cid }: { cid: number }) {
                 <div className="text-xs text-slate-400">
                   {s.max_pages} עמודי רשימה · {s.max_threads} אשכולות · {s.last_scanned_at ? `נסרק ${new Date(s.last_scanned_at).toLocaleDateString("he-IL")}` : "טרם נסרק"}
                 </div>
+                {s.last_scan_note && (
+                  <div className={`text-xs mt-0.5 ${(s.last_scan_found || 0) > 0 ? "text-emerald-600" : "text-amber-600"}`}>↳ {s.last_scan_note}</div>
+                )}
               </div>
               <button className="text-slate-400 hover:text-brand-600 p-1 shrink-0" title="ערוך" onClick={() => { setEditId(s.id); setEdit({ url: s.url, name: s.name || "", max_pages: s.max_pages, max_threads: s.max_threads }); }}><Pencil size={15} /></button>
               <button className="text-slate-400 hover:text-rose-600 p-1 shrink-0" title="מחק" onClick={() => { if (confirm("למחוק את האתר?")) remove.mutate(s.id); }}><Trash2 size={15} /></button>
@@ -105,8 +132,9 @@ function SitesManager({ cid }: { cid: number }) {
 }
 
 /* ---------------- Lead card ---------------- */
-function LeadCard({ lead, onStatus, onSave, onDelete }: {
+function LeadCard({ lead, forumName, onStatus, onSave, onDelete }: {
   lead: ForumLead;
+  forumName?: string;
   onStatus: (id: number, s: ProspectStatus) => void;
   onSave: (id: number, body: { suggested_reply: string; target_url: string }) => void;
   onDelete: (id: number) => void;
@@ -121,7 +149,7 @@ function LeadCard({ lead, onStatus, onSave, onDelete }: {
     <div className="card">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2 flex-wrap min-w-0">
-          <span className="badge bg-amber-50 text-amber-700">פורום</span>
+          <span className="badge bg-amber-50 text-amber-700">{forumName || "פורום"}</span>
           <span className="badge bg-slate-100 text-slate-600">ניקוד {lead.score}</span>
           <span className="badge bg-slate-100 text-slate-500">{STATUS_LABEL[lead.status]}</span>
         </div>
@@ -189,6 +217,7 @@ function LeadCard({ lead, onStatus, onSave, onDelete }: {
 export default function ForumOutreachTab({ cid, client }: { cid: number; client?: api.Client | null }) {
   const qc = useQueryClient();
   const [filter, setFilter] = useState<ProspectStatus | "all">("all");
+  const [forumFilter, setForumFilter] = useState<number | "all">("all");
   const [polling, setPolling] = useState(false);
 
   const { data: leads, isLoading } = useQuery({
@@ -199,8 +228,9 @@ export default function ForumOutreachTab({ cid, client }: { cid: number; client?
   });
   const invalidate = () => qc.invalidateQueries({ queryKey: ["forum-leads", cid] });
 
-  const { data: sites } = useQuery({ queryKey: ["forum-sites", cid], queryFn: () => api.listForumSites(cid), enabled: !!cid });
+  const { data: sites } = useQuery({ queryKey: ["forum-sites", cid], queryFn: () => api.listForumSites(cid), enabled: !!cid, refetchInterval: polling ? 12000 : false });
   const activeCount = (sites || []).filter((s) => s.active).length;
+  const siteName = (id: number | null) => (sites || []).find((s) => s.id === id)?.name || (sites || []).find((s) => s.id === id)?.url || "פורום";
 
   const [showPrefs, setShowPrefs] = useState(false);
   const [prefs, setPrefs] = useState("");
@@ -219,9 +249,11 @@ export default function ForumOutreachTab({ cid, client }: { cid: number; client?
   const remove = useMutation({ mutationFn: (id: number) => api.deleteForumLead(id), onSuccess: invalidate });
 
   const all = leads || [];
-  const counts: Record<string, number> = { all: all.length };
-  for (const s of ["new", "approved", "in_progress", "done", "rejected"]) counts[s] = all.filter((l) => l.status === s).length;
-  const visible = filter === "all" ? all : all.filter((l) => l.status === filter);
+  const byForum = forumFilter === "all" ? all : all.filter((l) => l.forum_site_id === forumFilter);
+  const counts: Record<string, number> = { all: byForum.length };
+  for (const s of ["new", "approved", "in_progress", "done", "rejected"]) counts[s] = byForum.filter((l) => l.status === s).length;
+  const visible = filter === "all" ? byForum : byForum.filter((l) => l.status === filter);
+  const forumsWithLeads = (sites || []).filter((s) => all.some((l) => l.forum_site_id === s.id));
 
   return (
     <div>
@@ -272,7 +304,17 @@ export default function ForumOutreachTab({ cid, client }: { cid: number; client?
         </div>
       ) : (
         <div className="flex gap-6 items-start">
-          <div className="w-36 shrink-0 sticky top-6 flex flex-col gap-1">
+          <div className="w-44 shrink-0 sticky top-6 flex flex-col gap-1">
+            {forumsWithLeads.length > 1 && (
+              <div className="mb-3">
+                <div className="text-xs text-slate-400 uppercase px-3 mb-1">פורום</div>
+                <select className="input text-sm py-1.5" value={String(forumFilter)}
+                  onChange={(e) => setForumFilter(e.target.value === "all" ? "all" : Number(e.target.value))}>
+                  <option value="all">כל הפורומים</option>
+                  {forumsWithLeads.map((s) => <option key={s.id} value={s.id}>{s.name || s.url}</option>)}
+                </select>
+              </div>
+            )}
             <div className="text-xs text-slate-400 uppercase px-3 mb-1">סטטוס</div>
             {STATUS_TABS.map((t) => (
               <button key={t.key} onClick={() => setFilter(t.key)}
@@ -287,7 +329,7 @@ export default function ForumOutreachTab({ cid, client }: { cid: number; client?
               <div className="card text-center py-10 text-slate-400 text-sm">אין הזדמנויות בסטטוס הזה.</div>
             ) : (
               visible.map((l) => (
-                <LeadCard key={l.id} lead={l}
+                <LeadCard key={l.id} lead={l} forumName={siteName(l.forum_site_id)}
                   onStatus={(id, s) => status.mutate({ id, s })}
                   onSave={(id, body) => saveLead.mutate({ id, body })}
                   onDelete={(id) => { if (confirm("למחוק את ההזדמנות?")) remove.mutate(id); }}

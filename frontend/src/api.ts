@@ -557,6 +557,9 @@ export interface ForumSite {
   max_threads: number;
   active: boolean;
   last_scanned_at: string | null;
+  last_scan_note: string | null;
+  last_scan_found: number | null;
+  parent_url: string | null;
   created_at: string;
 }
 export interface ForumLead {
@@ -598,6 +601,11 @@ export async function deleteForumSite(id: number): Promise<void> {
 /** Kick off the forum scan (runs in the background; poll the leads list for results). */
 export async function runForumScan(clientId: number): Promise<{ started: boolean; remaining: number; note?: string }> {
   return await invokeFn("forum-scan", { client_id: clientId });
+}
+
+/** Discover sub-forums under a parent forum URL; add=true also registers them as sites. */
+export async function discoverSubforums(clientId: number, url: string, add: boolean): Promise<{ found: { url: string; title: string }[]; added: number; note?: string }> {
+  return await invokeFn("forum-discover", { client_id: clientId, url, add });
 }
 
 export async function listForumLeads(clientId: number): Promise<ForumLead[]> {
