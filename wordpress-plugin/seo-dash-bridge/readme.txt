@@ -1,8 +1,12 @@
 === SEO Dash Bridge ===
 
-Secure endpoints + fixes that let the SEO dashboard make deeper changes than the
-default WordPress REST API: single H1, Elementor text edits, Yoast/RankMath meta,
-site-wide Additional CSS, and (optional) theme-file edits.
+Secure endpoints that let the SEO dashboard make deeper changes than the default
+WordPress REST API: Elementor text edits, Yoast/RankMath meta, site-wide Additional
+CSS, optional theme-file edits, and an optional (off by default) H1 fix.
+
+IMPORTANT: The plugin changes NOTHING on its own. It only exposes capabilities; every
+change happens only when you explicitly approve it from the dashboard, step by step.
+There is no automatic or scheduled action.
 
 == Install ==
 1. WordPress admin → Plugins → Add New → Upload Plugin → choose seo-dash-bridge.zip → Install → Activate.

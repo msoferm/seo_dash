@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SEO Dash Bridge
  * Description: Secure endpoints + fixes that let the SEO dashboard make deeper changes than the default WordPress REST API (single H1, Elementor text edits, Yoast/RankMath meta, Additional CSS, and optional theme-file edits). Configure under Settings → SEO Dash Bridge.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: SEO Dash
  */
 
@@ -15,7 +15,7 @@ function seodash_key() {
 }
 function seodash_fix_h1_enabled() {
     if (defined('SEODASH_FIX_H1')) return (bool) SEODASH_FIX_H1;
-    return get_option('seodash_fix_h1', '1') === '1';
+    return get_option('seodash_fix_h1', '0') === '1'; // OFF by default — nothing automatic
 }
 function seodash_theme_files_enabled() {
     if (defined('SEODASH_ALLOW_THEME_FILES')) return (bool) SEODASH_ALLOW_THEME_FILES;
@@ -28,7 +28,7 @@ register_activation_hook(__FILE__, function () {
         try { $k = bin2hex(random_bytes(24)); } catch (\Throwable $e) { $k = wp_generate_password(48, false, false); }
         add_option('seodash_key', $k);
     }
-    if (get_option('seodash_fix_h1') === false) add_option('seodash_fix_h1', '1');
+    if (get_option('seodash_fix_h1') === false) add_option('seodash_fix_h1', '0');          // OFF — nothing automatic
     if (get_option('seodash_allow_theme_files') === false) add_option('seodash_allow_theme_files', '0');
 });
 
@@ -52,13 +52,16 @@ add_action('admin_init', function () {
 function seodash_settings_page() {
     if (!current_user_can('manage_options')) return;
     $key  = esc_attr(get_option('seodash_key', ''));
-    $h1   = get_option('seodash_fix_h1', '1') === '1';
+    $h1   = get_option('seodash_fix_h1', '0') === '1';
     $tf   = get_option('seodash_allow_theme_files', '0') === '1';
     $ping = esc_url(rest_url('seodash/v1/ping'));
     ?>
     <div class="wrap">
       <h1>SEO Dash Bridge</h1>
-      <p>מחבר את האתר לדאשבורד ה-SEO. העתק את המפתח למטא ללדאשבורד עבור אתר זה.</p>
+      <p>מחבר את האתר לדאשבורד ה-SEO. העתק את המפתח הסודי לדאשבורד עבור אתר זה.</p>
+      <p style="background:#f0f6fc;border-right:4px solid #2271b1;padding:10px 12px;max-width:40rem">
+        <strong>הפלאגין אינו משנה דבר באתר מעצמו.</strong> הוא רק מאפשר פעולות, וכל שינוי מתבצע אך ורק כשאתה מאשר אותו ידנית בדאשבורד — שלב אחרי שלב. אין שום פעולה אוטומטית או מתוזמנת.
+      </p>
       <form method="post" action="options.php">
         <?php settings_fields('seodash_group'); ?>
         <table class="form-table" role="presentation">
@@ -71,8 +74,8 @@ function seodash_settings_page() {
             </td>
           </tr>
           <tr>
-            <th scope="row">תיקון H1 אוטומטי</th>
-            <td><label><input type="checkbox" name="seodash_fix_h1" value="1" <?php checked($h1); ?> /> ודא שלכל עמוד יש H1 יחיד ותקין (ממיר את הכותרת הראשית ל-H1 אם חסר).</label></td>
+            <th scope="row">תיקון H1 אוטומטי (כבוי)</th>
+            <td><label><input type="checkbox" name="seodash_fix_h1" value="1" <?php checked($h1); ?> /> אם תסמן — האתר יוסיף H1 תקין בכל עמוד שחסר בו. כבוי כברירת מחדל; השאר כבוי אם אתה מעדיף לתקן ידנית.</label></td>
           </tr>
           <tr>
             <th scope="row">עריכת קבצי תבנית/CSS</th>
@@ -105,7 +108,7 @@ add_action('rest_api_init', function () {
         'callback' => function () {
             return [
                 'ok' => true,
-                'version' => '1.1.0',
+                'version' => '1.2.0',
                 'elementor' => defined('ELEMENTOR_VERSION') ? ELEMENTOR_VERSION : null,
                 'h1_fix_enabled' => seodash_fix_h1_enabled(),
                 'theme_files_enabled' => seodash_theme_files_enabled(),
