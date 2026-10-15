@@ -1,41 +1,100 @@
 <?php
 /**
  * Plugin Name: SEO Dash Bridge
- * Description: Secure endpoints + fixes that let the SEO dashboard make deeper changes than the default WordPress REST API (single H1, Elementor text edits, Yoast/RankMath meta, Additional CSS, and optional theme-file edits).
- * Version: 1.0.0
+ * Description: Secure endpoints + fixes that let the SEO dashboard make deeper changes than the default WordPress REST API (single H1, Elementor text edits, Yoast/RankMath meta, Additional CSS, and optional theme-file edits). Configure under Settings → SEO Dash Bridge.
+ * Version: 1.1.0
  * Author: SEO Dash
- *
- * INSTALL (self-hosted sites you control):
- *   1. Copy this file to:  wp-content/mu-plugins/seo-dash-bridge.php
- *      (create the "mu-plugins" folder if it doesn't exist — files there auto-activate,
- *       no admin install, so the site's WAF/plugin-blocker won't interfere.)
- *   2. Change SEODASH_KEY below to a long random string and give the SAME value to the
- *      dashboard for this site.
- *   3. (Optional) To allow template/theme-file edits, set SEODASH_ALLOW_THEME_FILES to true.
- *   4. Verify:  GET  https://SITE/wp-json/seodash/v1/ping   with header  X-SEODASH-KEY: <key>
- *              and a valid Application Password — should return {"ok":true,...}.
  */
 
 if (!defined('ABSPATH')) exit;
 
-/* ============================ CONFIG ============================ */
-// REQUIRED: set to a long random secret, identical to the one stored in the dashboard.
-if (!defined('SEODASH_KEY'))               define('SEODASH_KEY', 'CHANGE-ME-TO-A-LONG-RANDOM-STRING');
-// H1 auto-fix: ensure every front-end page renders exactly one real <h1>.
-if (!defined('SEODASH_FIX_H1'))            define('SEODASH_FIX_H1', true);
-// Theme/template file editing can execute code — powerful and risky. Off by default.
-if (!defined('SEODASH_ALLOW_THEME_FILES')) define('SEODASH_ALLOW_THEME_FILES', false);
+/* ===== Settings resolution (constants override options, for power users) ===== */
+function seodash_key() {
+    if (defined('SEODASH_KEY') && SEODASH_KEY && SEODASH_KEY !== 'CHANGE-ME-TO-A-LONG-RANDOM-STRING') return SEODASH_KEY;
+    return (string) get_option('seodash_key', '');
+}
+function seodash_fix_h1_enabled() {
+    if (defined('SEODASH_FIX_H1')) return (bool) SEODASH_FIX_H1;
+    return get_option('seodash_fix_h1', '1') === '1';
+}
+function seodash_theme_files_enabled() {
+    if (defined('SEODASH_ALLOW_THEME_FILES')) return (bool) SEODASH_ALLOW_THEME_FILES;
+    return get_option('seodash_allow_theme_files', '0') === '1';
+}
+
+/* ===== On activation: auto-generate a secret so it's ready immediately ===== */
+register_activation_hook(__FILE__, function () {
+    if (!get_option('seodash_key')) {
+        try { $k = bin2hex(random_bytes(24)); } catch (\Throwable $e) { $k = wp_generate_password(48, false, false); }
+        add_option('seodash_key', $k);
+    }
+    if (get_option('seodash_fix_h1') === false) add_option('seodash_fix_h1', '1');
+    if (get_option('seodash_allow_theme_files') === false) add_option('seodash_allow_theme_files', '0');
+});
 
 /* ============================ AUTH ============================= */
-/**
- * Every endpoint requires BOTH a matching shared secret header AND an authenticated user
- * (via Application Password) who can edit content. Two independent gates.
- */
 function seodash_authed($request) {
-    $key = $request->get_header('x-seodash-key');
-    if (!$key || !hash_equals(SEODASH_KEY, (string) $key)) return false;
+    $expected = seodash_key();
+    $key = (string) $request->get_header('x-seodash-key');
+    if ($expected === '' || $key === '' || !hash_equals($expected, $key)) return false;
     return current_user_can('edit_posts');
 }
+
+/* ========================= Admin settings ===================== */
+add_action('admin_menu', function () {
+    add_options_page('SEO Dash Bridge', 'SEO Dash Bridge', 'manage_options', 'seo-dash-bridge', 'seodash_settings_page');
+});
+add_action('admin_init', function () {
+    register_setting('seodash_group', 'seodash_key');
+    register_setting('seodash_group', 'seodash_fix_h1');
+    register_setting('seodash_group', 'seodash_allow_theme_files');
+});
+function seodash_settings_page() {
+    if (!current_user_can('manage_options')) return;
+    $key  = esc_attr(get_option('seodash_key', ''));
+    $h1   = get_option('seodash_fix_h1', '1') === '1';
+    $tf   = get_option('seodash_allow_theme_files', '0') === '1';
+    $ping = esc_url(rest_url('seodash/v1/ping'));
+    ?>
+    <div class="wrap">
+      <h1>SEO Dash Bridge</h1>
+      <p>מחבר את האתר לדאשבורד ה-SEO. העתק את המפתח למטא ללדאשבורד עבור אתר זה.</p>
+      <form method="post" action="options.php">
+        <?php settings_fields('seodash_group'); ?>
+        <table class="form-table" role="presentation">
+          <tr>
+            <th scope="row"><label for="seodash_key">מפתח סודי (X-SEODASH-KEY)</label></th>
+            <td>
+              <input name="seodash_key" id="seodash_key" type="text" class="regular-text code" style="width:28rem" value="<?php echo $key; ?>" />
+              <button type="button" class="button" onclick="(function(){var a='0123456789abcdef',s='';for(var i=0;i<48;i++)s+=a[Math.floor(Math.random()*16)];document.getElementById('seodash_key').value=s;})()">צור חדש</button>
+              <p class="description">מחרוזת אקראית ארוכה. הדבק את אותו ערך בדאשבורד עבור אתר זה.</p>
+            </td>
+          </tr>
+          <tr>
+            <th scope="row">תיקון H1 אוטומטי</th>
+            <td><label><input type="checkbox" name="seodash_fix_h1" value="1" <?php checked($h1); ?> /> ודא שלכל עמוד יש H1 יחיד ותקין (ממיר את הכותרת הראשית ל-H1 אם חסר).</label></td>
+          </tr>
+          <tr>
+            <th scope="row">עריכת קבצי תבנית/CSS</th>
+            <td>
+              <label><input type="checkbox" name="seodash_allow_theme_files" value="1" <?php checked($tf); ?> /> אפשר עריכת קבצי התבנית הפעילה דרך הדאשבורד.</label>
+              <p class="description" style="color:#b32d2e">זהירות: מאפשר כתיבת קבצי php/css/js/html בתבנית — יכולת חזקה. הפעל רק אם צריך.</p>
+            </td>
+          </tr>
+          <tr>
+            <th scope="row">כתובת בדיקה</th>
+            <td><code><?php echo $ping; ?></code> <span class="description">(דורש כותרת X-SEODASH-KEY + Application Password)</span></td>
+          </tr>
+        </table>
+        <?php submit_button('שמור'); ?>
+      </form>
+    </div>
+    <?php
+}
+add_filter('plugin_action_links_' . plugin_basename(__FILE__), function ($links) {
+    $links[] = '<a href="' . admin_url('options-general.php?page=seo-dash-bridge') . '">הגדרות</a>';
+    return $links;
+});
 
 /* ============================ ROUTES =========================== */
 add_action('rest_api_init', function () {
@@ -46,15 +105,15 @@ add_action('rest_api_init', function () {
         'callback' => function () {
             return [
                 'ok' => true,
-                'version' => '1.0.0',
+                'version' => '1.1.0',
                 'elementor' => defined('ELEMENTOR_VERSION') ? ELEMENTOR_VERSION : null,
-                'theme_files_enabled' => (bool) SEODASH_ALLOW_THEME_FILES,
+                'h1_fix_enabled' => seodash_fix_h1_enabled(),
+                'theme_files_enabled' => seodash_theme_files_enabled(),
                 'active_theme' => wp_get_theme()->get('Name'),
             ];
         },
     ]);
 
-    // ---- SEO meta (Yoast + RankMath) ----
     register_rest_route('seodash/v1', '/meta/(?P<id>\d+)', [
         'methods' => 'POST', 'permission_callback' => $perm,
         'callback' => function ($r) {
@@ -68,7 +127,6 @@ add_action('rest_api_init', function () {
         },
     ]);
 
-    // ---- Elementor: read ----
     register_rest_route('seodash/v1', '/elementor/(?P<id>\d+)', [
         'methods' => 'GET', 'permission_callback' => $perm,
         'callback' => function ($r) {
@@ -82,13 +140,10 @@ add_action('rest_api_init', function () {
         },
     ]);
 
-    // ---- Elementor: targeted text replace (safe: only touches string values) ----
     register_rest_route('seodash/v1', '/elementor/(?P<id>\d+)/replace', [
-        'methods' => 'POST', 'permission_callback' => $perm,
-        'callback' => 'seodash_elementor_replace',
+        'methods' => 'POST', 'permission_callback' => $perm, 'callback' => 'seodash_elementor_replace',
     ]);
 
-    // ---- Additional CSS (safe, via the Customizer's custom CSS — no file writes) ----
     register_rest_route('seodash/v1', '/custom-css', [
         'methods' => 'POST', 'permission_callback' => $perm,
         'callback' => function ($r) {
@@ -102,7 +157,6 @@ add_action('rest_api_init', function () {
         },
     ]);
 
-    // ---- Theme files (GUARDED: off unless SEODASH_ALLOW_THEME_FILES, active theme only) ----
     register_rest_route('seodash/v1', '/theme-file', [
         'methods' => 'GET',  'permission_callback' => $perm, 'callback' => 'seodash_theme_file_get',
     ]);
@@ -129,7 +183,6 @@ function seodash_elementor_replace($r) {
         if ($find === '') continue;
         seodash_walk_replace($data, $find, $replace, $count);
     }
-
     if ($count > 0) {
         $json = wp_json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         update_post_meta($id, '_elementor_data', wp_slash($json));
@@ -150,42 +203,38 @@ function seodash_walk_replace(&$node, $find, $replace, &$count) {
 }
 
 /* ========================= H1 auto-fix ========================= */
-if (SEODASH_FIX_H1) {
-    add_action('template_redirect', function () {
-        if (is_admin() || is_feed() || is_robots()) return;
-        if (defined('REST_REQUEST') && REST_REQUEST) return;
-        if (defined('DOING_AJAX') && DOING_AJAX) return;
-        ob_start('seodash_h1_filter');
-    });
-}
+add_action('template_redirect', function () {
+    if (!seodash_fix_h1_enabled()) return;
+    if (is_admin() || is_feed() || is_robots()) return;
+    if (defined('REST_REQUEST') && REST_REQUEST) return;
+    if (defined('DOING_AJAX') && DOING_AJAX) return;
+    ob_start('seodash_h1_filter');
+});
 function seodash_h1_filter($html) {
-    if (!is_string($html) || stripos($html, '</body>') === false) return $html; // only full HTML docs
-    if (preg_match('/<h1[\s>]/i', $html)) return $html;                          // already has an H1
+    if (!is_string($html) || stripos($html, '</body>') === false) return $html;
+    if (preg_match('/<h1[\s>]/i', $html)) return $html;
 
     $promote_first = function ($segment) {
         return preg_replace_callback('/<(h[2-4])(\s[^>]*)?>(.*?)<\/\1>/is', function ($m) {
             return '<h1' . (isset($m[2]) ? $m[2] : '') . '>' . $m[3] . '</h1>';
         }, $segment, 1);
     };
-    // Prefer the first heading inside the main content container.
     foreach (['/(<main\b[^>]*>)(.*?)(<\/main>)/is', '/(<article\b[^>]*>)(.*?)(<\/article>)/is'] as $wrap) {
         if (preg_match($wrap, $html, $mm)) {
             $inner = $promote_first($mm[2]);
             if ($inner !== $mm[2]) return str_replace($mm[0], $mm[1] . $inner . $mm[3], $html);
         }
     }
-    // Fallback: promote the first H2 on the page.
     $new = preg_replace('/<h2(\s[^>]*)?>(.*?)<\/h2>/is', '<h1$1>$2</h1>', $html, 1, $c);
     return $c ? $new : $html;
 }
 
 /* ========================= Theme files ========================= */
 function seodash_theme_path($rel) {
-    $root = get_stylesheet_directory(); // active (child) theme only
+    $root = get_stylesheet_directory();
     $full = $root . '/' . ltrim((string) $rel, '/');
     $resolved = realpath($full);
     $base = realpath($root);
-    // For an existing file it must resolve inside the theme; for a new file, its parent must.
     if ($resolved !== false) { if (strpos($resolved, $base) !== 0) return null; }
     else { $parent = realpath(dirname($full)); if ($parent === false || strpos($parent, $base) !== 0) return null; }
     $ext = strtolower(pathinfo($full, PATHINFO_EXTENSION));
@@ -193,17 +242,17 @@ function seodash_theme_path($rel) {
     return $full;
 }
 function seodash_theme_file_get($r) {
-    if (!SEODASH_ALLOW_THEME_FILES) return new WP_Error('disabled', 'theme-file editing is disabled (set SEODASH_ALLOW_THEME_FILES true)', ['status' => 403]);
+    if (!seodash_theme_files_enabled()) return new WP_Error('disabled', 'theme-file editing is disabled (enable under Settings → SEO Dash Bridge)', ['status' => 403]);
     $p = seodash_theme_path($r->get_param('path'));
     if (!$p || !file_exists($p)) return new WP_Error('not_found', 'file not found / not allowed', ['status' => 404]);
     return ['path' => $r->get_param('path'), 'content' => file_get_contents($p)];
 }
 function seodash_theme_file_put($r) {
-    if (!SEODASH_ALLOW_THEME_FILES) return new WP_Error('disabled', 'theme-file editing is disabled', ['status' => 403]);
+    if (!seodash_theme_files_enabled()) return new WP_Error('disabled', 'theme-file editing is disabled', ['status' => 403]);
     $p = seodash_theme_path($r->get_param('path'));
     if (!$p) return new WP_Error('bad_request', 'invalid path or extension (allowed: php/css/js/html, active theme only)', ['status' => 400]);
     $content = (string) $r->get_param('content');
-    if (file_exists($p)) @copy($p, $p . '.seodash-bak'); // keep one backup for rollback
+    if (file_exists($p)) @copy($p, $p . '.seodash-bak');
     $bytes = file_put_contents($p, $content);
     if ($bytes === false) return new WP_Error('io_error', 'write failed (file permissions?)', ['status' => 500]);
     return ['ok' => true, 'bytes' => $bytes, 'backup' => file_exists($p . '.seodash-bak')];
