@@ -1,5 +1,6 @@
 /** Shared WordPress page-editing helpers (used by audit-fix and recommendation-apply). */
 import { callClaude, DEFAULT_MODEL, textOf } from "./anthropic.ts";
+import { hasBridge, applyElementorFix } from "./bridge.ts";
 
 export function normalizeSite(u: string): string {
   let s = (u || "").trim().replace(/\/+$/, "");
@@ -35,6 +36,14 @@ export async function applyPageFix(cw: any, page: string, instruction: string): 
   const auth = basicAuth(cw.username, cw.app_password);
   const target = await resolveTarget(site, auth, page);
   if (!target) throw new Error("לא הצלחתי לזהות את העמוד באתר לתיקון אוטומטי");
+
+  // Bridge path: Elementor pages can't be edited via core REST content.
+  if (hasBridge(cw)) {
+    try {
+      const br = await applyElementorFix(cw, target.id, instruction);
+      if (br) return br; // Elementor page — handled (or honestly reported). null → classic flow.
+    } catch (_e) { /* fall back to classic REST flow */ }
+  }
 
   const cur = await fetch(`${site}/wp-json/wp/v2/${target.type}/${target.id}?context=edit&_fields=title,excerpt,content`, { headers: { Authorization: auth } });
   if (!cur.ok) throw new Error(`לא ניתן לקרוא את העמוד (${cur.status})`);

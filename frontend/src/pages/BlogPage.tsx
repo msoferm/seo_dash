@@ -70,7 +70,7 @@ export default function BlogPage() {
 
   const invalidate = () => { qc.invalidateQueries({ queryKey: ["wp", cid] }); qc.invalidateQueries({ queryKey: ["blog-posts", cid] }); };
 
-  const settings = useMutation({ mutationFn: (p: { mode?: "publish" | "draft"; enabled?: boolean; require_approval?: boolean; blog_instructions?: string }) => api.updateWordpressSettings(cid, p), onSuccess: () => qc.invalidateQueries({ queryKey: ["wp", cid] }) });
+  const settings = useMutation({ mutationFn: (p: { mode?: "publish" | "draft"; enabled?: boolean; require_approval?: boolean; blog_instructions?: string; bridge_secret?: string; bridge_enabled?: boolean }) => api.updateWordpressSettings(cid, p), onSuccess: () => qc.invalidateQueries({ queryKey: ["wp", cid] }) });
   const disconnect = useMutation({ mutationFn: () => api.disconnectWordpress(cid), onSuccess: invalidate });
   const publishNow = useMutation({ mutationFn: () => api.publishBlogNow(cid), onSuccess: invalidate });
   const propose = useMutation({ mutationFn: () => api.proposeBlog(cid), onSuccess: invalidate });
@@ -78,6 +78,7 @@ export default function BlogPage() {
   const reject = useMutation({ mutationFn: (id: number) => api.rejectBlogProposal(id), onSuccess: invalidate });
 
   const [instructions, setInstructions] = useState("");
+  const [bridgeSecret, setBridgeSecret] = useState("");
   useEffect(() => { if (wp) setInstructions(wp.blog_instructions || ""); }, [wp]);
   const saveInstructions = useMutation({ mutationFn: () => api.updateWordpressSettings(cid, { blog_instructions: instructions }), onSuccess: () => qc.invalidateQueries({ queryKey: ["wp", cid] }) });
 
@@ -147,6 +148,28 @@ export default function BlogPage() {
                 נוצר: "{(publishNow.data as any).title}" (מילה: {(publishNow.data as any).keyword}) — <a href={(publishNow.data as any).url} target="_blank" rel="noreferrer" className="underline">צפה</a>
               </div>
             )}
+          </div>
+
+          {/* SEO Dash Bridge — advanced edits (manual only) */}
+          <div className="card mb-6">
+            <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-1"><Plug size={18} className="text-brand-600" /> גשר SEO Dash (עריכות מתקדמות)</h3>
+            <p className="text-xs text-slate-500 mb-3">
+              מאפשר לדאשבורד לערוך תוכן Elementor, תיאורי מטא ו-CSS דרך תוסף הגשר באתר — <span className="font-medium">רק כשתלחץ "קבל ויישם" על תיקון. אין שום פעולה אוטומטית.</span>{" "}
+              <span className={wp.bridge_enabled ? "text-emerald-600 font-medium" : "text-amber-600 font-medium"}>{wp.bridge_enabled ? "מצב: פעיל" : "מצב: לא מוגדר"}</span>
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <input className="input flex-1 min-w-[260px]" type="password"
+                placeholder={wp.bridge_enabled ? "מפתח מוגדר — הדבק כדי להחליף" : "הדבק מפתח סודי (הגדרות וורדפרס → SEO Dash Bridge)"}
+                value={bridgeSecret} onChange={(e) => setBridgeSecret(e.target.value)} />
+              <button className="btn-primary" disabled={!bridgeSecret.trim() || settings.isPending}
+                onClick={() => { settings.mutate({ bridge_secret: bridgeSecret.trim(), bridge_enabled: true }); setBridgeSecret(""); }}>
+                <Save size={16} /> שמור מפתח והפעל
+              </button>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={wp.bridge_enabled} className="h-4 w-4 accent-brand-600" onChange={(e) => settings.mutate({ bridge_enabled: e.target.checked })} />
+                <span className="text-slate-700">גשר פעיל</span>
+              </label>
+            </div>
           </div>
 
           {/* Instructions / continuous improvement */}

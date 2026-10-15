@@ -9,6 +9,16 @@
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
 import { callClaude, DEFAULT_MODEL, textOf } from "../_shared/anthropic.ts";
+import { hasBridge, applyElementorFix } from "../_shared/bridge.ts";
+
+async function renderedHasNoH1(pageUrl: string): Promise<boolean> {
+  try {
+    const pub = await fetch(pageUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
+    if (!pub.ok) return false;
+    const html = await pub.text();
+    return [...html.matchAll(/<h1[^>]*>([\s\S]*?)<\/h1>/gi)].map((m) => m[1].replace(/<[^>]+>/g, "").trim()).filter(Boolean).length === 0;
+  } catch { return false; }
+}
 
 function normalizeSite(u: string): string {
   let s = (u || "").trim().replace(/\/+$/, "");
@@ -54,6 +64,26 @@ Deno.serve(async (req) => {
 
     const target = await resolveTarget(site, auth, page);
     if (!target) return errorResponse("לא הצלחתי לזהות את העמוד באתר לתיקון אוטומטי", 404);
+
+    const isH1Issue = /\bh1\b/i.test(`${issue} ${fix || ""}`);
+
+    // Bridge path: Elementor pages can't be edited via core REST content — use the bridge.
+    if (hasBridge(cw)) {
+      try {
+        const br = await applyElementorFix(cw, target.id, fix || issue, { modification });
+        if (br) { // page is Elementor-managed
+          if (!br.applied) return errorResponse(br.note, 422);
+          if (isH1Issue && await renderedHasNoH1(page)) {
+            return errorResponse(`הטקסט עודכן ב-Elementor, אך בעמוד בפועל עדיין אין תג H1 אמיתי — ה-H1/כותרת מרונדרים כ-H2 ע"י התבנית/הווידג'ט. יש לשנות את רמת הכותרת ב-Elementor ידנית.`, 422);
+          }
+          await sb.from("audit_issues").update({ status: "applied", applied_note: br.note }).eq("id", issue_id);
+          return jsonResponse({ applied: true, target: page, note: br.note });
+        }
+        // br === null → not an Elementor page; fall through to the classic REST flow.
+      } catch (e) {
+        console.error("bridge fix failed, falling back to REST:", (e as Error).message);
+      }
+    }
 
     // current content
     const cur = await fetch(`${site}/wp-json/wp/v2/${target.type}/${target.id}?context=edit&_fields=title,excerpt,content`, { headers: { Authorization: auth } });
@@ -123,19 +153,13 @@ Deno.serve(async (req) => {
 
     // For H1 / heading issues, field-level success is not enough: the theme may render the
     // title as H2 (or strip body H1s). Verify against the RENDERED public page.
-    const isH1Issue = /\bh1\b/i.test(`${issue} ${fix || ""}`);
     if (isH1Issue) {
       try {
-        const pub = await fetch(page, { headers: { "User-Agent": "Mozilla/5.0" } });
-        if (pub.ok) {
-          const html = await pub.text();
-          const h1s = [...html.matchAll(/<h1[^>]*>([\s\S]*?)<\/h1>/gi)].map((m) => m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()).filter(Boolean);
-          if (h1s.length === 0) {
-            return errorResponse(
-              `השדות עודכנו ב-WordPress, אך בבדיקת העמוד בפועל עדיין אין תג H1 אמיתי — התבנית (theme) מרנדרת את הכותרת הראשית כ-H2. לא ניתן ליצור H1 תקין דרך עריכת תוכן/כותרת ב-REST; יש לתקן זאת בהגדרות התבנית או בבילדר. (שינוי הכותרת כן בוצע וניתן לשחזור מהיסטוריית הגרסאות.)`,
-              422,
-            );
-          }
+        if (await renderedHasNoH1(page)) {
+          return errorResponse(
+            `השדות עודכנו ב-WordPress, אך בבדיקת העמוד בפועל עדיין אין תג H1 אמיתי — התבנית (theme) מרנדרת את הכותרת הראשית כ-H2. לא ניתן ליצור H1 תקין דרך עריכת תוכן/כותרת ב-REST; יש לתקן זאת בהגדרות התבנית או בבילדר. (שינוי הכותרת כן בוצע וניתן לשחזור מהיסטוריית הגרסאות.)`,
+            422,
+          );
         }
       } catch { /* if the public fetch fails, fall through to field-level result */ }
     }

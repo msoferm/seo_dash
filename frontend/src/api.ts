@@ -778,6 +778,7 @@ export interface ClientWordpress {
   require_approval: boolean;
   blog_instructions: string | null;
   last_published_at: string | null;
+  bridge_enabled: boolean;
   created_at: string;
 }
 export interface BlogPost {
@@ -797,7 +798,7 @@ export interface BlogPost {
 export async function getWordpress(clientId: number): Promise<ClientWordpress | null> {
   const { data, error } = await supabase
     .from("client_wordpress")
-    .select("client_id, site_url, username, mode, enabled, require_approval, blog_instructions, last_published_at, created_at")
+    .select("client_id, site_url, username, mode, enabled, require_approval, blog_instructions, last_published_at, bridge_enabled, created_at")
     .eq("client_id", clientId)
     .maybeSingle();
   if (error) throw error;
@@ -811,7 +812,7 @@ export async function connectWordpress(
   return await invokeFn("wp-connect", { client_id: clientId, ...body });
 }
 
-export async function updateWordpressSettings(clientId: number, patch: { mode?: "publish" | "draft"; enabled?: boolean; require_approval?: boolean; blog_instructions?: string }): Promise<void> {
+export async function updateWordpressSettings(clientId: number, patch: { mode?: "publish" | "draft"; enabled?: boolean; require_approval?: boolean; blog_instructions?: string; bridge_secret?: string; bridge_enabled?: boolean }): Promise<void> {
   const { error } = await supabase.from("client_wordpress").update(patch).eq("client_id", clientId);
   if (error) throw error;
 }
