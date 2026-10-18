@@ -718,6 +718,21 @@ export async function listCrawledPages(clientId: number): Promise<CrawledPage[]>
   return (data || []) as CrawledPage[];
 }
 
+// ===== Impact tracking (computed from GSC history) =====
+export interface ImpactRow {
+  rec_id: number; page: string | null; title: string; applied_note: string | null; applied_at: string;
+  clicks_before: number; clicks_now: number; impressions_before: number; impressions_now: number;
+}
+export async function getImpactStats(clientId: number): Promise<ImpactRow[]> {
+  const { data, error } = await supabase.rpc("impact_stats", { p_client_id: clientId });
+  if (error) throw error;
+  return (data || []).map((r: any) => ({
+    ...r,
+    clicks_before: +r.clicks_before, clicks_now: +r.clicks_now,
+    impressions_before: +r.impressions_before, impressions_now: +r.impressions_now,
+  }));
+}
+
 // ===== All-pages master =====
 export interface PageStat { page: string; clicks: number; impressions: number; ctr: number; position: number }
 export async function getPageStats(clientId: number, from: string, to: string): Promise<PageStat[]> {
