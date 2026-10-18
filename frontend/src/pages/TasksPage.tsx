@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Sparkles, Upload, Plus, Trash2, ListTodo, CheckCircle2, Loader2, Check, CheckCheck, X, Bot, User,
   ChevronDown, ChevronUp, ExternalLink, Activity, Wrench, Gauge, FileText, TrendingUp, Link2, Target,
-  MessageSquare, CalendarDays, LayoutList,
+  MessageSquare, CalendarDays, LayoutList, PenTool, ListChecks,
 } from "lucide-react";
 import * as api from "../api";
 import type { Task, Level, RecStatus } from "../api";
@@ -38,14 +38,16 @@ function fmtDate(d: string | null): string {
 }
 
 /* ---------- Subtask row ---------- */
-function SubtaskRow({ t, cid, onAction, busy, execError, showPillar }: {
+function SubtaskRow({ t, cid, onAction, onPreview, busy, previewing, execError, showPillar }: {
   t: Task; cid: number;
   onAction: (t: Task, action: Action, note?: string) => void;
-  busy: boolean; execError?: string; showPillar?: boolean;
+  onPreview: (t: Task) => void;
+  busy: boolean; previewing: boolean; execError?: string; showPillar?: boolean;
 }) {
   const [showNote, setShowNote] = useState(false);
   const [note, setNote] = useState("");
-  const [open, setOpen] = useState(false);
+  const [openNote, setOpenNote] = useState(false);
+  const [openPreview, setOpenPreview] = useState(true);
   const done = t.status === "done";
   const ignored = t.status === "ignored";
   const link = deepLink(cid, t);
@@ -75,16 +77,27 @@ function SubtaskRow({ t, cid, onAction, busy, execError, showPillar }: {
             {done && t.source_type === "recommendation" && <Link to={`/clients/${cid}/impact`} className="text-xs text-emerald-600 hover:underline inline-flex items-center gap-0.5"><Activity size={11} /> מעקב השפעה</Link>}
           </div>
 
+          {/* Preview (draft text / detailed steps) */}
+          {t.preview && (
+            <div className="mt-2">
+              <button className="text-xs font-medium text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1" onClick={() => setOpenPreview((o) => !o)}>
+                {openPreview ? <ChevronUp size={13} /> : <ChevronDown size={13} />} {t.writes_text ? "טיוטה לבדיקה" : "פירוט ביצוע"}
+              </button>
+              {openPreview && <div className="mt-1 text-sm text-slate-700 whitespace-pre-wrap bg-indigo-50/50 border border-indigo-100 rounded-lg p-3">{t.preview}</div>}
+            </div>
+          )}
+
           {t.note && (
             <div className="mt-2">
-              <button className="text-xs text-slate-500 hover:text-slate-700 inline-flex items-center gap-1" onClick={() => setOpen((o) => !o)}>
-                {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />} {isClaude ? "תוצאת הביצוע / הערה" : "הנחיה / הערה"}
+              <button className="text-xs text-slate-500 hover:text-slate-700 inline-flex items-center gap-1" onClick={() => setOpenNote((o) => !o)}>
+                {openNote ? <ChevronUp size={13} /> : <ChevronDown size={13} />} {isClaude ? "תוצאת הביצוע / הערה" : "הנחיה / הערה"}
               </button>
-              {open && <div className="mt-1 text-sm text-slate-700 whitespace-pre-wrap bg-slate-50 rounded-lg p-3">{t.note}</div>}
+              {openNote && <div className="mt-1 text-sm text-slate-700 whitespace-pre-wrap bg-slate-50 rounded-lg p-3">{t.note}</div>}
             </div>
           )}
           {execError && <div className="mt-1.5 text-xs text-rose-600">{execError}</div>}
 
+          {/* Note input for "בצע + הערה" */}
           {showNote && t.status === "open" && (
             <div className="mt-2 flex flex-col gap-1.5">
               <textarea className="input py-1 text-sm" rows={2} autoFocus placeholder={isClaude ? "הנחיה לביצוע (למשל: שמור על הטון, הוסף CTA) + הערה שתישמר..." : "הערה שתישמר על המשימה..."}
@@ -97,31 +110,38 @@ function SubtaskRow({ t, cid, onAction, busy, execError, showPillar }: {
               </div>
             </div>
           )}
-        </div>
 
-        {t.status === "open" && !showNote && (
-          <div className="shrink-0 flex items-center gap-1 flex-wrap justify-end max-w-[230px]">
-            <button className="btn-primary text-xs py-1 px-2" disabled={busy} onClick={() => onAction(t, "execute")} title="קלוד מבצע / מכין הנחיה">
-              {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} בצע
-            </button>
-            <button className="btn-secondary text-xs py-1 px-2" onClick={() => setShowNote(true)} title="בצע עם הנחיה/הערה"><MessageSquare size={13} /> בצע + הערה</button>
-            <button className="btn-secondary text-xs py-1 px-2" onClick={() => onAction(t, "done")} title="סמן כבוצע (בלי הרצה)"><CheckCheck size={13} /> בוצע</button>
-            <button className="text-xs py-1 px-2 rounded text-slate-500 hover:bg-slate-100" onClick={() => onAction(t, "ignore")}>התעלם</button>
-          </div>
-        )}
-        {t.status !== "open" && (
-          <button className="shrink-0 text-xs py-1 px-2 rounded text-brand-600 hover:bg-brand-50" onClick={() => onAction(t, "reopen")}>החזר</button>
-        )}
+          {/* Actions */}
+          {t.status === "open" && !showNote && (
+            <div className="flex flex-wrap gap-1.5 mt-2.5">
+              <button className="btn-secondary text-xs py-1 px-2 border-indigo-200 text-indigo-700" disabled={previewing} onClick={() => onPreview(t)} title={t.writes_text ? "קלוד יכתוב טיוטה לבדיקה — בלי לבצע" : "קבל פירוט מדויק מה לעשות"}>
+                {previewing ? <Loader2 size={13} className="animate-spin" /> : t.writes_text ? <PenTool size={13} /> : <ListChecks size={13} />}
+                {t.writes_text ? "כתוב טיוטה" : "פרט מה לעשות"}
+              </button>
+              <button className="btn-primary text-xs py-1 px-2" disabled={busy} onClick={() => onAction(t, "execute")} title="קלוד מבצע / מכין הנחיה">
+                {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} בצע
+              </button>
+              <button className="btn-secondary text-xs py-1 px-2" onClick={() => setShowNote(true)} title="בצע עם הנחיה/הערה"><MessageSquare size={13} /> בצע + הערה</button>
+              <button className="btn-secondary text-xs py-1 px-2" onClick={() => onAction(t, "done")} title="סמן כבוצע (בלי הרצה)"><CheckCheck size={13} /> בוצע</button>
+              <button className="text-xs py-1 px-2 rounded text-slate-500 hover:bg-slate-100" onClick={() => onAction(t, "ignore")}>התעלם</button>
+            </div>
+          )}
+          {t.status !== "open" && (
+            <div className="mt-2">
+              <button className="text-xs py-1 px-2 rounded text-brand-600 hover:bg-brand-50" onClick={() => onAction(t, "reopen")}>החזר לפתוח</button>
+            </div>
+          )}
+        </div>
       </div>
     </li>
   );
 }
 
 /* ---------- Pillar card ---------- */
-function PillarCard({ pillar, subs, cid, onAction, busyId, execErr }: {
+function PillarCard({ pillar, subs, cid, onAction, onPreview, busyId, previewId, execErr }: {
   pillar: Task; subs: Task[]; cid: number;
-  onAction: (t: Task, action: Action, note?: string) => void;
-  busyId?: number; execErr?: { id: number; msg: string };
+  onAction: (t: Task, action: Action, note?: string) => void; onPreview: (t: Task) => void;
+  busyId?: number; previewId?: number; execErr?: { id: number; msg: string };
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const meta = PILLAR_META[pillar.category || ""] || { label: pillar.title, icon: ListTodo };
@@ -142,7 +162,7 @@ function PillarCard({ pillar, subs, cid, onAction, busyId, execErr }: {
       </div>
       {!collapsed && (
         <ul className="mt-2">
-          {subs.map((s) => <SubtaskRow key={s.id} t={s} cid={cid} onAction={onAction} busy={busyId === s.id} execError={execErr?.id === s.id ? execErr.msg : undefined} />)}
+          {subs.map((s) => <SubtaskRow key={s.id} t={s} cid={cid} onAction={onAction} onPreview={onPreview} busy={busyId === s.id} previewing={previewId === s.id} execError={execErr?.id === s.id ? execErr.msg : undefined} />)}
         </ul>
       )}
     </div>
@@ -165,8 +185,8 @@ export default function TasksPage() {
   const create = useMutation({ mutationFn: (title: string) => api.createTask(cid, title), onSuccess: () => { setNewTitle(""); invalidate(); } });
   const toggle = useMutation({ mutationFn: ({ id, done }: { id: number; done: boolean }) => api.setTaskDone(id, done), onSuccess: invalidate });
   const remove = useMutation({ mutationFn: (id: number) => api.deleteTask(id), onSuccess: invalidate });
+  const preview = useMutation({ mutationFn: (t: Task) => api.previewTask(t.id), onSuccess: invalidate });
 
-  // Keep the source feature (recommendation / audit) in sync when not executing.
   async function syncSource(t: Task, status: "done" | "ignored" | "open") {
     if (!t.source_ref) return;
     if (t.source_type === "recommendation") {
@@ -188,9 +208,9 @@ export default function TasksPage() {
           const r = await api.applyAuditFix(Number(t.source_ref), note || undefined);
           await api.setTaskStatus(t.id, "done", note ? `${r.note}\nהערה: ${note}` : r.note);
         } else if (note) {
-          await api.setTaskStatus(t.id, "done", note); // manual with a note
+          await api.setTaskStatus(t.id, "done", note);
         } else {
-          await api.guideTask(t.id); // manual → guidance, marks done server-side
+          await api.guideTask(t.id);
         }
       } else if (action === "done") {
         await api.setTaskStatus(t.id, "done");
@@ -206,8 +226,11 @@ export default function TasksPage() {
     onSuccess: invalidate,
   });
   const busyId = act.isPending ? (act.variables as any)?.t?.id : undefined;
-  const execErr = act.isError && act.variables ? { id: (act.variables as any).t.id, msg: (act.error as any)?.message || "שגיאה" } : undefined;
+  const previewId = preview.isPending ? (preview.variables as any)?.id : undefined;
+  const execErr = act.isError && act.variables ? { id: (act.variables as any).t.id, msg: (act.error as any)?.message || "שגיאה" }
+    : preview.isError && preview.variables ? { id: (preview.variables as any).id, msg: (preview.error as any)?.message || "שגיאה" } : undefined;
   const onAction = (t: Task, action: Action, note?: string) => act.mutate({ t, action, note });
+  const onPreview = (t: Task) => preview.mutate(t);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return;
@@ -226,7 +249,6 @@ export default function TasksPage() {
   const looseOpen = loose.filter((t) => t.status === "open");
   const looseDone = loose.filter((t) => t.status !== "open");
 
-  // Agenda: group plan subtasks by due date.
   const byDate = new Map<string, Task[]>();
   for (const s of planSubs) { const k = s.due_date || "ללא תאריך"; if (!byDate.has(k)) byDate.set(k, []); byDate.get(k)!.push(s); }
   const dateKeys = [...byDate.keys()].sort((a, b) => (a === "ללא תאריך" ? 1 : b === "ללא תאריך" ? -1 : a.localeCompare(b)));
@@ -261,7 +283,6 @@ export default function TasksPage() {
         </form>
       </div>
 
-      {/* View toggle */}
       {pillars.length > 0 && (
         <div className="flex gap-2 mb-4">
           <button onClick={() => setView("pillars")} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium ${view === "pillars" ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}><LayoutList size={15} /> לפי עמוד תווך</button>
@@ -280,7 +301,7 @@ export default function TasksPage() {
       ) : (
         <div className="space-y-4">
           {view === "pillars" && pillars.map((p) => (
-            <PillarCard key={p.id} pillar={p} subs={subsByPillar(p.id)} cid={cid} onAction={onAction} busyId={busyId} execErr={execErr} />
+            <PillarCard key={p.id} pillar={p} subs={subsByPillar(p.id)} cid={cid} onAction={onAction} onPreview={onPreview} busyId={busyId} previewId={previewId} execErr={execErr} />
           ))}
 
           {view === "agenda" && dateKeys.map((dk) => {
@@ -297,7 +318,7 @@ export default function TasksPage() {
                   <span className="text-xs font-normal text-slate-400">({openCount} פתוחות)</span>
                 </h3>
                 <ul>
-                  {items.map((s) => <SubtaskRow key={s.id} t={s} cid={cid} onAction={onAction} busy={busyId === s.id} execError={execErr?.id === s.id ? execErr.msg : undefined} showPillar />)}
+                  {items.map((s) => <SubtaskRow key={s.id} t={s} cid={cid} onAction={onAction} onPreview={onPreview} busy={busyId === s.id} previewing={previewId === s.id} execError={execErr?.id === s.id ? execErr.msg : undefined} showPillar />)}
                 </ul>
               </div>
             );

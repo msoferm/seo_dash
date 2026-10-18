@@ -81,6 +81,8 @@ export interface Task {
   source_type: string | null;
   source_ref: string | null;
   due_date: string | null;
+  preview: string | null;
+  writes_text: boolean;
 }
 
 export interface SuggestionAttachment {
@@ -1006,6 +1008,11 @@ export async function generateWorkPlan(clientId: number): Promise<{ created: num
 /** Generate step-by-step guidance for a manual subtask (stores it + marks done). */
 export async function guideTask(taskId: number): Promise<{ note: string }> {
   return await invokeFn("task-guide", { task_id: taskId });
+}
+
+/** Preview (read-only): a draft text to review, or detailed how-to steps. Changes nothing. */
+export async function previewTask(taskId: number): Promise<{ mode: "draft" | "guidance"; text: string }> {
+  return await invokeFn("task-preview", { task_id: taskId });
 }
 
 export async function setTaskStatus(id: number, status: TaskStatus, note?: string): Promise<void> {

@@ -40,8 +40,9 @@ interface Sub {
   key: string; pillar: string; kind: string; title: string; details: string;
   source_type: string; source_ref: string;
   month: number; priority: string; impact: string; effort: string; note: string | null;
-  due_date?: string;
+  writes_text?: boolean; due_date?: string;
 }
+const WRITES_TEXT_REC = new Set(["new_content", "improve_page", "title_meta", "add_keywords"]);
 
 const PRI_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 function iso(d: Date): string { return d.toISOString().slice(0, 10); }
@@ -93,7 +94,7 @@ Deno.serve(async (req) => {
     const subs: Sub[] = [];
     const push = (s: Partial<Sub> & { pillar: string; kind: string; title: string; source_type: string; source_ref: string; key: string }) =>
       subs.push({
-        details: "", note: null, month: DEFAULT_MONTH[s.pillar] ?? 2, priority: "medium", impact: "medium", effort: "medium",
+        details: "", note: null, writes_text: false, month: DEFAULT_MONTH[s.pillar] ?? 2, priority: "medium", impact: "medium", effort: "medium",
         ...s,
       } as Sub);
 
@@ -104,18 +105,20 @@ Deno.serve(async (req) => {
       source_type: "recommendation", source_ref: String(r.id),
       priority: r.potential && ["high", "medium", "low"].includes(r.potential) ? r.potential : "medium",
       impact: r.potential && ["high", "medium", "low"].includes(r.potential) ? r.potential : "medium",
+      writes_text: WRITES_TEXT_REC.has(r.type),
     });
     for (const a of audits) push({
       key: `audit:${a.id}`, pillar: auditPillar(a.issue || ""), kind: "claude",
       title: (a.issue || "").slice(0, 160), details: (a.fix || "").slice(0, 300),
       source_type: "audit", source_ref: String(a.id),
       priority: a.severity === "high" ? "high" : a.severity === "low" ? "low" : "medium",
+      writes_text: auditPillar(a.issue || "") === "content",
     });
 
     // --- Deterministic advisory (always reliable) ---
     let adv = 0;
     push({ key: `adv:${adv++}`, pillar: "speed", kind: "manual", title: "בדיקת מהירות ו-Core Web Vitals", details: "הרץ PageSpeed Insights לעמודים המובילים וטפל ב-LCP / CLS / INP (תמונות, קאשינג, סקריפטים).", source_type: "tool", source_ref: "speed", month: 1, priority: "high", impact: "high" });
-    if (pagesNoFaq > 0) push({ key: `adv:${adv++}`, pillar: "content", kind: "claude", title: `הוספת FAQ ל-${pagesNoFaq} עמודים ללא FAQ`, details: "צור FAQ מובנה (Schema) לעמודים מרכזיים — משפר נראות ו-Rich Results.", source_type: "tool", source_ref: "faq", month: 2, priority: "medium", impact: "medium" });
+    if (pagesNoFaq > 0) push({ key: `adv:${adv++}`, pillar: "content", kind: "claude", title: `הוספת FAQ ל-${pagesNoFaq} עמודים ללא FAQ`, details: "צור FAQ מובנה (Schema) לעמודים מרכזיים — משפר נראות ו-Rich Results.", source_type: "tool", source_ref: "faq", month: 2, priority: "medium", impact: "medium", writes_text: true });
     if (forumNew + prospectNew > 0) push({ key: `adv:${adv++}`, pillar: "authority", kind: "manual", title: `טיפול ב-${forumNew + prospectNew} הזדמנויות קישור`, details: `${forumNew} בפורומים, ${prospectNew} באיתור קישורים — עבור, אשר ובצע את המתאימות.`, source_type: "tool", source_ref: forumNew ? "forums" : "prospects", month: 2, priority: "medium", impact: "high" });
     if (conv.length) push({ key: `adv:${adv++}`, pillar: "conversions", kind: "manual", title: "שיפור מקורות עם המרה נמוכה", details: conv.map((c: any) => `${c.source || c.channel || "ישיר"}: ${c.conversions}/${c.sessions}`).slice(0, 4).join(" | "), source_type: "tool", source_ref: "conversions", month: 3, priority: "medium", impact: "high" });
     push({ key: `adv:${adv++}`, pillar: "conversions", kind: "manual", title: "שיפור חווית משתמש (UX) בעמודים המובילים", details: "בדוק CTA, טפסים, בהירות הצעת הערך ומסלול ההמרה בעמודים המובילים.", source_type: "tool", source_ref: "ux", month: 3, priority: "medium", impact: "medium" });
@@ -166,7 +169,7 @@ Deno.serve(async (req) => {
       .map((s, i) => ({
         client_id, parent_id: pillarId.get(s.pillar)!, category: s.pillar, is_pillar: false,
         title: s.title, details: s.details || null, kind: s.kind, target_month: s.month, due_date: s.due_date || null,
-        priority: s.priority, impact: s.impact, effort: s.effort, note: s.note,
+        writes_text: !!s.writes_text, priority: s.priority, impact: s.impact, effort: s.effort, note: s.note,
         source_type: s.source_type, source_ref: s.source_ref || null, source: "plan", status: "open", sort_order: i,
       }));
     for (let i = 0; i < rows.length; i += 200) {
