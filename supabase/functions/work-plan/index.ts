@@ -1,10 +1,11 @@
 /**
  * POST { client_id }
  * Builds a strategic 3-month SEO work plan: 6 pillars (main tasks) each with concrete
- * subtasks. Subtasks are grounded in REAL data (pending recommendations + audit issues are
- * carried in verbatim with their source id so they can be executed), and Claude handles the
- * strategy: assigning each to a month/priority/impact/effort and ADDING advisory subtasks
- * for areas the data doesn't cover (speed, UX, conversions, authority, FAQ).
+ * subtasks. Subtasks are built deterministically from REAL data (pending recommendations +
+ * audit issues are carried verbatim with their source id so they're executable; plus a few
+ * advisory tasks for speed/UX/conversions/authority/FAQ). Claude only does a COMPACT
+ * scheduling pass (month/priority/impact/effort per item) — and if that fails for any
+ * reason, sensible defaults are used, so a plan is always produced.
  *
  * Replaces any previous generated plan (source='plan'); manual/upload tasks are untouched.
  */
@@ -31,8 +32,15 @@ function pillarForRec(type: string): string {
 function auditPillar(issue: string): string {
   return /h1|מטא|meta|כותר|title|תוכן|content|faq|alt|תיאור/i.test(issue) ? "content" : "technical";
 }
-const clampMonth = (m: any): number => { const n = parseInt(m); return n >= 1 && n <= 3 ? n : 2; };
-const valLevel = (v: any): string => (["high", "medium", "low"].includes(v) ? v : "medium");
+const DEFAULT_MONTH: Record<string, number> = { technical: 1, content: 1, speed: 1, traffic: 2, authority: 2, conversions: 3 };
+const clampMonth = (m: any, def: number): number => { const n = parseInt(m); return n >= 1 && n <= 3 ? n : def; };
+const valLevel = (v: any, def = "medium"): string => (["high", "medium", "low"].includes(v) ? v : def);
+
+interface Sub {
+  key: string; pillar: string; kind: string; title: string; details: string;
+  source_type: string; source_ref: string;
+  month: number; priority: string; impact: string; effort: string; note: string | null;
+}
 
 Deno.serve(async (req) => {
   const cors = handleCors(req);
@@ -46,99 +54,76 @@ Deno.serve(async (req) => {
     if (!client) return errorResponse("לקוח לא נמצא", 404);
 
     const [recRes, auditRes, forumRes, prospectRes, pagesRes, convRes] = await Promise.all([
-      sb.from("recommendations").select("id, type, page, title, action, opportunity, potential").eq("client_id", client_id).eq("status", "pending").limit(40),
-      sb.from("audit_issues").select("id, page, issue, fix, severity").eq("client_id", client_id).eq("status", "pending").limit(30),
+      sb.from("recommendations").select("id, type, title, action, opportunity, potential").eq("client_id", client_id).eq("status", "pending").limit(25),
+      sb.from("audit_issues").select("id, issue, fix, severity").eq("client_id", client_id).eq("status", "pending").limit(15),
       sb.from("forum_leads").select("id").eq("client_id", client_id).eq("status", "new"),
       sb.from("link_prospects").select("id").eq("client_id", client_id).eq("status", "new"),
       sb.from("pages").select("id, has_faq").eq("client_id", client_id),
-      sb.from("ga4_conversions").select("source, channel, conversions, sessions").eq("client_id", client_id).order("sessions", { ascending: false }).limit(8),
+      sb.from("ga4_conversions").select("source, channel, conversions, sessions").eq("client_id", client_id).order("sessions", { ascending: false }).limit(6),
     ]);
 
     const recs = recRes.data || [], audits = auditRes.data || [], pages = pagesRes.data || [], conv = convRes.data || [];
+    const forumNew = (forumRes.data || []).length, prospectNew = (prospectRes.data || []).length;
+    const pagesNoFaq = pages.filter((p: any) => !p.has_faq).length;
 
-    // ---- Real, linkable candidates ----
-    type Cand = { key: string; pillar: string; kind: string; title: string; details: string; source_type: string; source_ref: string };
-    const candidates: Cand[] = [];
-    for (const r of recs) candidates.push({
+    const subs: Sub[] = [];
+    const push = (s: Partial<Sub> & { pillar: string; kind: string; title: string; source_type: string; source_ref: string; key: string }) =>
+      subs.push({
+        details: "", note: null, month: DEFAULT_MONTH[s.pillar] ?? 2, priority: "medium", impact: "medium", effort: "medium",
+        ...s,
+      } as Sub);
+
+    // --- Real, executable candidates ---
+    for (const r of recs) push({
       key: `rec:${r.id}`, pillar: pillarForRec(r.type), kind: CLAUDE_REC_TYPES.has(r.type) ? "claude" : "manual",
-      title: (r.title || "").slice(0, 160), details: (r.action || r.opportunity || "").slice(0, 160),
+      title: (r.title || "").slice(0, 160), details: (r.action || r.opportunity || "").slice(0, 300),
       source_type: "recommendation", source_ref: String(r.id),
+      priority: r.potential && ["high", "medium", "low"].includes(r.potential) ? r.potential : "medium",
+      impact: r.potential && ["high", "medium", "low"].includes(r.potential) ? r.potential : "medium",
     });
-    for (const a of audits) candidates.push({
+    for (const a of audits) push({
       key: `audit:${a.id}`, pillar: auditPillar(a.issue || ""), kind: "claude",
-      title: (a.issue || "").slice(0, 160), details: (a.fix || "").slice(0, 160),
+      title: (a.issue || "").slice(0, 160), details: (a.fix || "").slice(0, 300),
       source_type: "audit", source_ref: String(a.id),
+      priority: a.severity === "high" ? "high" : a.severity === "low" ? "low" : "medium",
     });
 
-    const summary = {
-      forum_leads_new: (forumRes.data || []).length,
-      prospects_new: (prospectRes.data || []).length,
-      pages_total: pages.length,
-      pages_without_faq: pages.filter((p: any) => !p.has_faq).length,
-      conv_sources: conv.map((c: any) => `${c.source || c.channel || "ישיר"}: ${c.conversions} המרות / ${c.sessions} סשנים`),
-    };
+    // --- Deterministic advisory (always reliable) ---
+    let adv = 0;
+    push({ key: `adv:${adv++}`, pillar: "speed", kind: "manual", title: "בדיקת מהירות ו-Core Web Vitals", details: "הרץ PageSpeed Insights לעמודים המובילים וטפל ב-LCP / CLS / INP (תמונות, קאשינג, סקריפטים).", source_type: "tool", source_ref: "speed", month: 1, priority: "high", impact: "high" });
+    if (pagesNoFaq > 0) push({ key: `adv:${adv++}`, pillar: "content", kind: "claude", title: `הוספת FAQ ל-${pagesNoFaq} עמודים ללא FAQ`, details: "צור FAQ מובנה (Schema) לעמודים מרכזיים — משפר נראות ו-Rich Results.", source_type: "tool", source_ref: "faq", month: 2, priority: "medium", impact: "medium" });
+    if (forumNew + prospectNew > 0) push({ key: `adv:${adv++}`, pillar: "authority", kind: "manual", title: `טיפול ב-${forumNew + prospectNew} הזדמנויות קישור`, details: `${forumNew} בפורומים, ${prospectNew} באיתור קישורים — עבור, אשר ובצע את המתאימות.`, source_type: "tool", source_ref: forumNew ? "forums" : "prospects", month: 2, priority: "medium", impact: "high" });
+    if (conv.length) push({ key: `adv:${adv++}`, pillar: "conversions", kind: "manual", title: "שיפור מקורות עם המרה נמוכה", details: conv.map((c: any) => `${c.source || c.channel || "ישיר"}: ${c.conversions}/${c.sessions}`).slice(0, 4).join(" | "), source_type: "tool", source_ref: "conversions", month: 3, priority: "medium", impact: "high" });
+    push({ key: `adv:${adv++}`, pillar: "conversions", kind: "manual", title: "שיפור חווית משתמש (UX) בעמודים המובילים", details: "בדוק CTA, טפסים, בהירות הצעת הערך ומסלול ההמרה בעמודים המובילים.", source_type: "tool", source_ref: "ux", month: 3, priority: "medium", impact: "medium" });
 
-    const system =
-      "אתה אסטרטג SEO בכיר שבונה תכנית עבודה ל-3 חודשים, מחולקת ל-6 עמודי תווך: " +
-      "technical (תשתית טכנית ואינדוקס), speed (מהירות/CWV), content (תוכן על-עמודי), traffic (הרחבת תנועה/תוכן חדש), authority (קישורים/סמכות), conversions (המרות/UX). " +
-      "קיבלת רשימת משימות-מועמדות אמיתיות (מתוך נתוני המערכת) וסיכום נתונים. המשימות שלך: " +
-      "(1) שבץ לכל מועמד: target_month (1-3), priority, impact, effort. שמור על ה-pillar וה-kind שסופקו אלא אם ברור שגוי. אפשר לנסח כותרת/פירוט קצר וברור יותר. " +
-      "(2) הוסף תתי-משימות ייעוץ (kind=manual) לתחומים שהנתונים מצביעים עליהם ואין להם מועמד: מהירות/CWV, UX, המרות (אם יש מקורות עם המרה נמוכה), סמכות (אם יש הזדמנויות קישור/פורומים), ו-FAQ (אם יש עמודים בלי FAQ). לכל אחת תן source_type='tool' ו-source_ref מתוך: speed|ux|conversions|forums|prospects|faq. " +
-      "(3) אסטרטגיה: חודש 1 = ניצחונות מהירים + תשתית קריטית; חודש 2 = עומק תוכן + תוכן חדש; חודש 3 = סמכות + המרות. " +
-      "לתתי-משימות manual כתוב note עם 2-4 צעדים קונקרטיים לביצוע. " +
-      'החזר אך ורק JSON: {"subtasks":[{"key":"<המפתח שסופק או null>","pillar":"<key>","title":"...","details":"...","kind":"claude|manual","target_month":1,"priority":"high|medium|low","impact":"high|medium|low","effort":"high|medium|low","note":"<להנחיה ידנית>","source_type":"recommendation|audit|tool","source_ref":"..."}]}. ' +
-      "כלול את כל המועמדים (לפי ה-key שלהם) בתוספת משימות הייעוץ. כתוב בעברית. התחל ישירות ב-{.";
+    if (subs.length === 0) return jsonResponse({ created: 0, pillars: 0, note: "אין מספיק נתונים לבניית תכנית. הרץ קודם מנוע המלצות/אודיט." });
 
-    const userMsg =
-      `עסק: ${client.name} (${client.domain})\nהערות: ${client.notes || "אין"}\n\n` +
-      `סיכום נתונים:\n- הזדמנויות קישור בפורומים (חדשות): ${summary.forum_leads_new}\n- הזדמנויות קישור כלליות (חדשות): ${summary.prospects_new}\n` +
-      `- עמודים: ${summary.pages_total} (ללא FAQ: ${summary.pages_without_faq})\n- מקורות המרה: ${summary.conv_sources.join(" | ") || "אין נתונים"}\n\n` +
-      `משימות-מועמדות (${candidates.length}):\n` +
-      candidates.map((c) => `[${c.key}] pillar=${c.pillar} kind=${c.kind} | ${c.title}${c.details ? ` — ${c.details}` : ""}`).join("\n");
+    // --- Compact scheduling pass with Claude (best-effort; defaults on failure) ---
+    try {
+      const list = subs.map((s) => `${s.key} | ${s.pillar} | ${s.title}`).join("\n");
+      const system =
+        "אתה אסטרטג SEO. לפניך רשימת תתי-משימות (מפתח | עמוד-תווך | כותרת). שבץ כל אחת לתכנית 3 חודשים: " +
+        "חודש 1 = ניצחונות מהירים + תשתית קריטית; חודש 2 = עומק תוכן ותוכן חדש; חודש 3 = סמכות והמרות. " +
+        'החזר אך ורק JSON קומפקטי: {"schedule":{"<key>":{"month":1,"priority":"high|medium|low","impact":"high|medium|low","effort":"high|medium|low"}}}. ' +
+        "התחל ישירות ב-{ ואל תוסיף טקסט.";
+      const resp = await callClaude({ model: DEFAULT_MODEL, max_tokens: 3000, system, messages: [{ role: "user", content: list }] });
+      const parsed = extractJson(textOf(resp));
+      const sched = parsed?.schedule || parsed || {};
+      for (const s of subs) {
+        const a = sched[s.key];
+        if (a && typeof a === "object") {
+          s.month = clampMonth(a.month, s.month);
+          s.priority = valLevel(a.priority, s.priority);
+          s.impact = valLevel(a.impact, s.impact);
+          s.effort = valLevel(a.effort, s.effort);
+        }
+      }
+    } catch (_e) { /* keep deterministic defaults */ }
 
-    const resp = await callClaude({ model: DEFAULT_MODEL, max_tokens: 8000, system, messages: [{ role: "user", content: userMsg }] });
-    let parsed: any; try { parsed = extractJson(textOf(resp)); } catch { return errorResponse(`המנוע החזיר תשובה שלא ניתן לפענח: ${textOf(resp).slice(0, 200)}`, 502); }
-    const claudeSubs: any[] = Array.isArray(parsed) ? parsed : (parsed.subtasks || []);
-
-    const byKey = new Map(candidates.map((c) => [c.key, c]));
-    const assigned = new Map<string, any>();
-    const advisory: any[] = [];
-    for (const s of claudeSubs) {
-      if (s.key && byKey.has(s.key)) assigned.set(s.key, s);
-      else if (!s.key || s.key === "null") advisory.push(s);
-    }
-
-    // Merge: every real candidate kept (Claude's scheduling overlaid), plus advisory additions.
-    type Final = Cand & { target_month: number; priority: string; impact: string; effort: string; note: string | null };
-    const final: Final[] = [];
-    for (const c of candidates) {
-      const a = assigned.get(c.key) || {};
-      final.push({
-        ...c,
-        pillar: PILLAR_KEYS.has(a.pillar) ? a.pillar : c.pillar,
-        title: (a.title || c.title || "משימה").slice(0, 200), details: (a.details || c.details || "").slice(0, 600),
-        target_month: clampMonth(a.target_month), priority: valLevel(a.priority), impact: valLevel(a.impact), effort: valLevel(a.effort),
-        note: a.note ? String(a.note).slice(0, 1200) : null,
-      });
-    }
-    for (const s of advisory) {
-      const pillar = PILLAR_KEYS.has(s.pillar) ? s.pillar : "content";
-      final.push({
-        key: "", pillar, kind: s.kind === "claude" ? "claude" : "manual",
-        title: String(s.title || "משימה").slice(0, 200), details: String(s.details || "").slice(0, 600),
-        source_type: s.source_type === "recommendation" || s.source_type === "audit" ? "tool" : (s.source_type || "tool"),
-        source_ref: s.source_ref ? String(s.source_ref).slice(0, 60) : "",
-        target_month: clampMonth(s.target_month), priority: valLevel(s.priority), impact: valLevel(s.impact), effort: valLevel(s.effort),
-        note: s.note ? String(s.note).slice(0, 1200) : null,
-      });
-    }
-    if (final.length === 0) return jsonResponse({ created: 0, pillars: 0, note: "אין מספיק נתונים לבניית תכנית. הרץ קודם מנוע המלצות/אודיט." });
-
-    // Replace the previous generated plan (keep manual/upload/claude single tasks).
+    // --- Persist: replace previous generated plan ---
     await sb.from("tasks").delete().eq("client_id", client_id).eq("source", "plan");
 
-    // Create only pillars that have subtasks.
-    const usedPillars = PILLARS.filter((p) => final.some((f) => f.pillar === p.key));
+    const usedPillars = PILLARS.filter((p) => subs.some((s) => s.pillar === p.key));
     const pillarId = new Map<string, number>();
     let order = 0;
     for (const p of usedPillars) {
@@ -149,13 +134,13 @@ Deno.serve(async (req) => {
       pillarId.set(p.key, data.id);
     }
 
-    const rows = final
-      .sort((a, b) => a.target_month - b.target_month)
-      .map((f, i) => ({
-        client_id, parent_id: pillarId.get(f.pillar)!, category: f.pillar, is_pillar: false,
-        title: f.title, details: f.details || null, kind: f.kind, target_month: f.target_month,
-        priority: f.priority, impact: f.impact, effort: f.effort, note: f.note,
-        source_type: f.source_type, source_ref: f.source_ref || null, source: "plan", status: "open", sort_order: i,
+    const rows = subs
+      .sort((a, b) => a.month - b.month)
+      .map((s, i) => ({
+        client_id, parent_id: pillarId.get(s.pillar)!, category: s.pillar, is_pillar: false,
+        title: s.title, details: s.details || null, kind: s.kind, target_month: s.month,
+        priority: s.priority, impact: s.impact, effort: s.effort, note: s.note,
+        source_type: s.source_type, source_ref: s.source_ref || null, source: "plan", status: "open", sort_order: i,
       }));
     for (let i = 0; i < rows.length; i += 200) {
       const { error } = await sb.from("tasks").insert(rows.slice(i, i + 200));
