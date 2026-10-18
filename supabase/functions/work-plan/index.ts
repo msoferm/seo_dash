@@ -40,6 +40,30 @@ interface Sub {
   key: string; pillar: string; kind: string; title: string; details: string;
   source_type: string; source_ref: string;
   month: number; priority: string; impact: string; effort: string; note: string | null;
+  due_date?: string;
+}
+
+const PRI_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
+function iso(d: Date): string { return d.toISOString().slice(0, 10); }
+/** Spread subtasks across Israeli working days (Sun–Thu) within each month block. */
+function assignDueDates(subs: Sub[]) {
+  const today = new Date();
+  const workdays: Date[][] = [[], [], []]; // month blocks 1..3
+  for (let i = 0; i < 95; i++) {
+    const d = new Date(today); d.setDate(d.getDate() + i);
+    const wd = d.getDay(); if (wd === 5 || wd === 6) continue; // skip Fri/Sat
+    const block = i < 30 ? 0 : i < 60 ? 1 : 2;
+    workdays[block].push(d);
+  }
+  for (const m of [1, 2, 3]) {
+    const block = workdays[m - 1].length ? workdays[m - 1] : workdays.flat();
+    const items = subs.filter((s) => s.month === m)
+      .sort((a, b) => (PRI_ORDER[a.priority] ?? 1) - (PRI_ORDER[b.priority] ?? 1));
+    items.forEach((s, i) => {
+      const idx = Math.min(block.length - 1, Math.floor((i * block.length) / Math.max(1, items.length)));
+      s.due_date = iso(block[idx] || today);
+    });
+  }
 }
 
 Deno.serve(async (req) => {
@@ -120,6 +144,9 @@ Deno.serve(async (req) => {
       }
     } catch (_e) { /* keep deterministic defaults */ }
 
+    // --- Spread across actual working dates over the 3 months ---
+    assignDueDates(subs);
+
     // --- Persist: replace previous generated plan ---
     await sb.from("tasks").delete().eq("client_id", client_id).eq("source", "plan");
 
@@ -138,7 +165,7 @@ Deno.serve(async (req) => {
       .sort((a, b) => a.month - b.month)
       .map((s, i) => ({
         client_id, parent_id: pillarId.get(s.pillar)!, category: s.pillar, is_pillar: false,
-        title: s.title, details: s.details || null, kind: s.kind, target_month: s.month,
+        title: s.title, details: s.details || null, kind: s.kind, target_month: s.month, due_date: s.due_date || null,
         priority: s.priority, impact: s.impact, effort: s.effort, note: s.note,
         source_type: s.source_type, source_ref: s.source_ref || null, source: "plan", status: "open", sort_order: i,
       }));

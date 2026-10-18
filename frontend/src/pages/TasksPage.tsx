@@ -2,11 +2,12 @@ import { useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Sparkles, Upload, Plus, Trash2, ListTodo, CheckCircle2, Loader2, Check, X, Bot, User,
+  Sparkles, Upload, Plus, Trash2, ListTodo, CheckCircle2, Loader2, Check, CheckCheck, X, Bot, User,
   ChevronDown, ChevronUp, ExternalLink, Activity, Wrench, Gauge, FileText, TrendingUp, Link2, Target,
+  MessageSquare, CalendarDays, LayoutList,
 } from "lucide-react";
 import * as api from "../api";
-import type { Task, Level } from "../api";
+import type { Task, Level, RecStatus } from "../api";
 import PageHeader from "../components/PageHeader";
 import Spinner from "../components/Spinner";
 
@@ -20,6 +21,9 @@ const PILLAR_META: Record<string, { label: string; icon: typeof Wrench }> = {
 };
 const PRIORITY_LABEL: Record<Level, string> = { high: "גבוהה", medium: "בינונית", low: "נמוכה" };
 const PRIORITY_BADGE: Record<Level, string> = { high: "bg-rose-50 text-rose-700", medium: "bg-amber-50 text-amber-700", low: "bg-emerald-50 text-emerald-700" };
+const PRI_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
+
+type Action = "execute" | "done" | "ignore" | "reopen";
 
 function deepLink(cid: number, t: Task): { href: string; label: string } | null {
   if (t.source_type === "recommendation") return { href: `/clients/${cid}/engine`, label: "מנוע המלצות" };
@@ -28,18 +32,25 @@ function deepLink(cid: number, t: Task): { href: string; label: string } | null 
   if (t.source_ref === "faq") return { href: `/clients/${cid}/pages`, label: "עמודים / FAQ" };
   return null;
 }
+function fmtDate(d: string | null): string {
+  if (!d) return "";
+  try { return new Date(d + "T00:00:00").toLocaleDateString("he-IL", { weekday: "short", day: "numeric", month: "numeric" }); } catch { return d; }
+}
 
 /* ---------- Subtask row ---------- */
-function SubtaskRow({ t, cid, onExecute, onIgnore, onReopen, executing, execError }: {
+function SubtaskRow({ t, cid, onAction, busy, execError, showPillar }: {
   t: Task; cid: number;
-  onExecute: (t: Task) => void; onIgnore: (id: number) => void; onReopen: (id: number) => void;
-  executing: boolean; execError?: string;
+  onAction: (t: Task, action: Action, note?: string) => void;
+  busy: boolean; execError?: string; showPillar?: boolean;
 }) {
+  const [showNote, setShowNote] = useState(false);
+  const [note, setNote] = useState("");
   const [open, setOpen] = useState(false);
   const done = t.status === "done";
   const ignored = t.status === "ignored";
   const link = deepLink(cid, t);
   const isClaude = t.kind === "claude";
+  const pillar = showPillar && t.category ? PILLAR_META[t.category] : null;
 
   return (
     <li className="py-3 border-b border-slate-100 last:border-0">
@@ -54,12 +65,12 @@ function SubtaskRow({ t, cid, onExecute, onIgnore, onReopen, executing, execErro
           {t.details && <div className="text-xs text-slate-500 mt-0.5">{t.details}</div>}
 
           <div className="flex flex-wrap gap-1.5 mt-1.5 items-center">
-            {t.target_month && <span className="badge bg-slate-100 text-slate-600">חודש {t.target_month}</span>}
+            {pillar && <span className="badge bg-slate-100 text-slate-600 inline-flex items-center gap-1"><pillar.icon size={11} /> {pillar.label}</span>}
+            {t.due_date && <span className="badge bg-indigo-50 text-indigo-700 inline-flex items-center gap-1"><CalendarDays size={11} /> {fmtDate(t.due_date)}</span>}
             {t.priority && <span className={`badge ${PRIORITY_BADGE[t.priority]}`}>עדיפות {PRIORITY_LABEL[t.priority]}</span>}
             <span className={`badge ${isClaude ? "bg-brand-50 text-brand-700" : "bg-violet-50 text-violet-700"}`}>
               {isClaude ? <><Bot size={11} /> קלוד מבצע</> : <><User size={11} /> ידני + הנחיה</>}
             </span>
-            {t.impact && <span className="badge bg-slate-100 text-slate-500">השפעה {PRIORITY_LABEL[t.impact]}</span>}
             {link && <Link to={link.href} className="text-xs text-brand-600 hover:underline inline-flex items-center gap-0.5"><ExternalLink size={11} /> {link.label}</Link>}
             {done && t.source_type === "recommendation" && <Link to={`/clients/${cid}/impact`} className="text-xs text-emerald-600 hover:underline inline-flex items-center gap-0.5"><Activity size={11} /> מעקב השפעה</Link>}
           </div>
@@ -67,36 +78,50 @@ function SubtaskRow({ t, cid, onExecute, onIgnore, onReopen, executing, execErro
           {t.note && (
             <div className="mt-2">
               <button className="text-xs text-slate-500 hover:text-slate-700 inline-flex items-center gap-1" onClick={() => setOpen((o) => !o)}>
-                {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />} {isClaude ? "תוצאת הביצוע" : "הנחיית ביצוע"}
+                {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />} {isClaude ? "תוצאת הביצוע / הערה" : "הנחיה / הערה"}
               </button>
               {open && <div className="mt-1 text-sm text-slate-700 whitespace-pre-wrap bg-slate-50 rounded-lg p-3">{t.note}</div>}
             </div>
           )}
           {execError && <div className="mt-1.5 text-xs text-rose-600">{execError}</div>}
-        </div>
 
-        <div className="shrink-0 flex items-center gap-1">
-          {t.status === "open" ? (
-            <>
-              <button className="btn-primary text-xs py-1 px-2" disabled={executing} onClick={() => onExecute(t)}>
-                {executing ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} בצע
-              </button>
-              <button className="text-xs py-1 px-2 rounded text-slate-500 hover:bg-slate-100" onClick={() => onIgnore(t.id)}>התעלם</button>
-            </>
-          ) : (
-            <button className="text-xs py-1 px-2 rounded text-brand-600 hover:bg-brand-50" onClick={() => onReopen(t.id)}>החזר</button>
+          {showNote && t.status === "open" && (
+            <div className="mt-2 flex flex-col gap-1.5">
+              <textarea className="input py-1 text-sm" rows={2} autoFocus placeholder={isClaude ? "הנחיה לביצוע (למשל: שמור על הטון, הוסף CTA) + הערה שתישמר..." : "הערה שתישמר על המשימה..."}
+                value={note} onChange={(e) => setNote(e.target.value)} />
+              <div className="flex gap-1.5">
+                <button className="btn-primary text-xs py-1 px-2" disabled={busy} onClick={() => { onAction(t, "execute", note); setShowNote(false); setNote(""); }}>
+                  {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} בצע עם הערה
+                </button>
+                <button className="text-xs py-1 px-2 rounded text-slate-500 hover:bg-slate-100" onClick={() => { setShowNote(false); setNote(""); }}>ביטול</button>
+              </div>
+            </div>
           )}
         </div>
+
+        {t.status === "open" && !showNote && (
+          <div className="shrink-0 flex items-center gap-1 flex-wrap justify-end max-w-[230px]">
+            <button className="btn-primary text-xs py-1 px-2" disabled={busy} onClick={() => onAction(t, "execute")} title="קלוד מבצע / מכין הנחיה">
+              {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} בצע
+            </button>
+            <button className="btn-secondary text-xs py-1 px-2" onClick={() => setShowNote(true)} title="בצע עם הנחיה/הערה"><MessageSquare size={13} /> בצע + הערה</button>
+            <button className="btn-secondary text-xs py-1 px-2" onClick={() => onAction(t, "done")} title="סמן כבוצע (בלי הרצה)"><CheckCheck size={13} /> בוצע</button>
+            <button className="text-xs py-1 px-2 rounded text-slate-500 hover:bg-slate-100" onClick={() => onAction(t, "ignore")}>התעלם</button>
+          </div>
+        )}
+        {t.status !== "open" && (
+          <button className="shrink-0 text-xs py-1 px-2 rounded text-brand-600 hover:bg-brand-50" onClick={() => onAction(t, "reopen")}>החזר</button>
+        )}
       </div>
     </li>
   );
 }
 
 /* ---------- Pillar card ---------- */
-function PillarCard({ pillar, subs, cid, exec, ignore, reopen, execVarId, execErr }: {
+function PillarCard({ pillar, subs, cid, onAction, busyId, execErr }: {
   pillar: Task; subs: Task[]; cid: number;
-  exec: (t: Task) => void; ignore: (id: number) => void; reopen: (id: number) => void;
-  execVarId?: number; execErr?: { id: number; msg: string };
+  onAction: (t: Task, action: Action, note?: string) => void;
+  busyId?: number; execErr?: { id: number; msg: string };
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const meta = PILLAR_META[pillar.category || ""] || { label: pillar.title, icon: ListTodo };
@@ -117,13 +142,7 @@ function PillarCard({ pillar, subs, cid, exec, ignore, reopen, execVarId, execEr
       </div>
       {!collapsed && (
         <ul className="mt-2">
-          {subs.map((s) => (
-            <SubtaskRow key={s.id} t={s} cid={cid}
-              onExecute={exec} onIgnore={ignore} onReopen={reopen}
-              executing={execVarId === s.id}
-              execError={execErr?.id === s.id ? execErr.msg : undefined}
-            />
-          ))}
+          {subs.map((s) => <SubtaskRow key={s.id} t={s} cid={cid} onAction={onAction} busy={busyId === s.id} execError={execErr?.id === s.id ? execErr.msg : undefined} />)}
         </ul>
       )}
     </div>
@@ -135,6 +154,7 @@ export default function TasksPage() {
   const cid = Number(clientId);
   const qc = useQueryClient();
   const [newTitle, setNewTitle] = useState("");
+  const [view, setView] = useState<"pillars" | "agenda">("pillars");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const { data: tasks, isLoading } = useQuery({ queryKey: ["tasks", cid], queryFn: () => api.listTasks(cid), enabled: !!cid });
@@ -146,23 +166,48 @@ export default function TasksPage() {
   const toggle = useMutation({ mutationFn: ({ id, done }: { id: number; done: boolean }) => api.setTaskDone(id, done), onSuccess: invalidate });
   const remove = useMutation({ mutationFn: (id: number) => api.deleteTask(id), onSuccess: invalidate });
 
-  const ignore = useMutation({ mutationFn: (id: number) => api.setTaskStatus(id, "ignored"), onSuccess: invalidate });
-  const reopen = useMutation({ mutationFn: (id: number) => api.setTaskStatus(id, "open"), onSuccess: invalidate });
-  const execute = useMutation({
-    mutationFn: async (t: Task) => {
-      if (t.source_type === "recommendation" && t.source_ref) {
-        const r = await api.applyRecommendation(Number(t.source_ref));
-        await api.setTaskStatus(t.id, "done", r.note);
-      } else if (t.source_type === "audit" && t.source_ref) {
-        const r = await api.applyAuditFix(Number(t.source_ref));
-        await api.setTaskStatus(t.id, "done", r.note);
-      } else {
-        await api.guideTask(t.id); // manual/tool → guidance + marks done server-side
+  // Keep the source feature (recommendation / audit) in sync when not executing.
+  async function syncSource(t: Task, status: "done" | "ignored" | "open") {
+    if (!t.source_ref) return;
+    if (t.source_type === "recommendation") {
+      const map: Record<string, RecStatus> = { done: "done", ignored: "ignored", open: "pending" };
+      await api.setRecommendationStatus(Number(t.source_ref), map[status]);
+    } else if (t.source_type === "audit") {
+      const map: Record<string, "pending" | "applied" | "rejected"> = { done: "applied", ignored: "rejected", open: "pending" };
+      await api.setAuditStatus(Number(t.source_ref), map[status]);
+    }
+  }
+
+  const act = useMutation({
+    mutationFn: async ({ t, action, note }: { t: Task; action: Action; note?: string }) => {
+      if (action === "execute") {
+        if (t.source_type === "recommendation" && t.source_ref) {
+          const r = await api.applyRecommendation(Number(t.source_ref), note || undefined);
+          await api.setTaskStatus(t.id, "done", note ? `${r.note}\nהערה: ${note}` : r.note);
+        } else if (t.source_type === "audit" && t.source_ref) {
+          const r = await api.applyAuditFix(Number(t.source_ref), note || undefined);
+          await api.setTaskStatus(t.id, "done", note ? `${r.note}\nהערה: ${note}` : r.note);
+        } else if (note) {
+          await api.setTaskStatus(t.id, "done", note); // manual with a note
+        } else {
+          await api.guideTask(t.id); // manual → guidance, marks done server-side
+        }
+      } else if (action === "done") {
+        await api.setTaskStatus(t.id, "done");
+        await syncSource(t, "done");
+      } else if (action === "ignore") {
+        await api.setTaskStatus(t.id, "ignored");
+        await syncSource(t, "ignored");
+      } else if (action === "reopen") {
+        await api.setTaskStatus(t.id, "open");
+        await syncSource(t, "open");
       }
     },
     onSuccess: invalidate,
   });
-  const execErr = execute.isError && execute.variables ? { id: (execute.variables as Task).id, msg: (execute.error as any)?.message || "שגיאה" } : undefined;
+  const busyId = act.isPending ? (act.variables as any)?.t?.id : undefined;
+  const execErr = act.isError && act.variables ? { id: (act.variables as any).t.id, msg: (act.error as any)?.message || "שגיאה" } : undefined;
+  const onAction = (t: Task, action: Action, note?: string) => act.mutate({ t, action, note });
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return;
@@ -175,16 +220,23 @@ export default function TasksPage() {
   const all = tasks || [];
   const pillars = all.filter((t) => t.is_pillar).sort((a, b) => a.sort_order - b.sort_order);
   const subsByPillar = (pid: number) => all.filter((t) => t.parent_id === pid)
-    .sort((a, b) => (a.target_month || 9) - (b.target_month || 9) || a.sort_order - b.sort_order);
+    .sort((a, b) => (a.target_month || 9) - (b.target_month || 9) || (a.due_date || "").localeCompare(b.due_date || "") || a.sort_order - b.sort_order);
+  const planSubs = all.filter((t) => t.source === "plan" && !t.is_pillar);
   const loose = all.filter((t) => t.source !== "plan" && !t.is_pillar);
   const looseOpen = loose.filter((t) => t.status === "open");
   const looseDone = loose.filter((t) => t.status !== "open");
+
+  // Agenda: group plan subtasks by due date.
+  const byDate = new Map<string, Task[]>();
+  for (const s of planSubs) { const k = s.due_date || "ללא תאריך"; if (!byDate.has(k)) byDate.set(k, []); byDate.get(k)!.push(s); }
+  const dateKeys = [...byDate.keys()].sort((a, b) => (a === "ללא תאריך" ? 1 : b === "ללא תאריך" ? -1 : a.localeCompare(b)));
+  const todayIso = new Date().toISOString().slice(0, 10);
 
   return (
     <div>
       <PageHeader
         title="לוח משימות"
-        subtitle="תכנית עבודה אסטרטגית ל-3 חודשים — נבנית מכל נתוני המערכת"
+        subtitle="תכנית עבודה אסטרטגית ל-3 חודשים, מחולקת לפי ימים — נבנית מכל נתוני המערכת"
         actions={
           <>
             <button className="btn-primary" onClick={() => { if (!pillars.length || confirm("בנייה מחדש תחליף את התכנית הקיימת (משימות ידניות יישמרו). להמשיך?")) plan.mutate(); }} disabled={plan.isPending}>
@@ -202,7 +254,6 @@ export default function TasksPage() {
       {plan.isError && <div className="mb-4 bg-rose-50 border border-rose-200 rounded-lg p-3 text-sm text-rose-700">שגיאה בבניית התכנית: {(plan.error as any)?.message}</div>}
       {plan.isSuccess && <div className="mb-4 bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-700">נבנתה תכנית: {(plan.data as any).pillars} עמודי תווך, {(plan.data as any).created} תתי-משימות.{(plan.data as any).note ? ` ${(plan.data as any).note}` : ""}</div>}
 
-      {/* manual quick-add */}
       <div className="card mb-6">
         <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (newTitle.trim()) create.mutate(newTitle.trim()); }}>
           <input className="input flex-1" placeholder="הוסף משימה ידנית..." value={newTitle} onChange={(e) => setNewTitle(e.target.value)} />
@@ -210,21 +261,47 @@ export default function TasksPage() {
         </form>
       </div>
 
+      {/* View toggle */}
+      {pillars.length > 0 && (
+        <div className="flex gap-2 mb-4">
+          <button onClick={() => setView("pillars")} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium ${view === "pillars" ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}><LayoutList size={15} /> לפי עמוד תווך</button>
+          <button onClick={() => setView("agenda")} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium ${view === "agenda" ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}><CalendarDays size={15} /> יומן לפי תאריך</button>
+        </div>
+      )}
+
       {isLoading ? (
         <Spinner />
       ) : pillars.length === 0 && loose.length === 0 ? (
         <div className="card text-center py-12 text-slate-500">
           <ListTodo size={40} className="mx-auto mb-3 text-slate-300" />
           <p className="text-slate-700 font-medium mb-1">אין עדיין תכנית עבודה</p>
-          <p className="text-sm">לחץ "בנה תכנית 3 חודשים" — קלוד יבנה תכנית אסטרטגית מכל נתוני המערכת (מנוע המלצות, אודיט, קישורים ועוד).</p>
+          <p className="text-sm">לחץ "בנה תכנית 3 חודשים" — קלוד יבנה תכנית אסטרטגית מכל נתוני המערכת.</p>
         </div>
       ) : (
         <div className="space-y-4">
-          {pillars.map((p) => (
-            <PillarCard key={p.id} pillar={p} subs={subsByPillar(p.id)} cid={cid}
-              exec={(t) => execute.mutate(t)} ignore={(id) => ignore.mutate(id)} reopen={(id) => reopen.mutate(id)}
-              execVarId={execute.isPending ? (execute.variables as Task)?.id : undefined} execErr={execErr} />
+          {view === "pillars" && pillars.map((p) => (
+            <PillarCard key={p.id} pillar={p} subs={subsByPillar(p.id)} cid={cid} onAction={onAction} busyId={busyId} execErr={execErr} />
           ))}
+
+          {view === "agenda" && dateKeys.map((dk) => {
+            const items = byDate.get(dk)!.slice().sort((a, b) => (PRI_ORDER[a.priority || "medium"]) - (PRI_ORDER[b.priority || "medium"]));
+            const openCount = items.filter((i) => i.status === "open").length;
+            const isPast = dk !== "ללא תאריך" && dk < todayIso;
+            const isToday = dk === todayIso;
+            return (
+              <div key={dk} className={`card ${isToday ? "border-brand-300" : ""}`}>
+                <h3 className={`font-semibold flex items-center gap-2 mb-1 ${isPast ? "text-slate-400" : "text-slate-800"}`}>
+                  <CalendarDays size={17} className={isToday ? "text-brand-600" : "text-slate-400"} />
+                  {dk === "ללא תאריך" ? "ללא תאריך" : new Date(dk + "T00:00:00").toLocaleDateString("he-IL", { weekday: "long", day: "numeric", month: "long" })}
+                  {isToday && <span className="badge bg-brand-50 text-brand-700">היום</span>}
+                  <span className="text-xs font-normal text-slate-400">({openCount} פתוחות)</span>
+                </h3>
+                <ul>
+                  {items.map((s) => <SubtaskRow key={s.id} t={s} cid={cid} onAction={onAction} busy={busyId === s.id} execError={execErr?.id === s.id ? execErr.msg : undefined} showPillar />)}
+                </ul>
+              </div>
+            );
+          })}
 
           {loose.length > 0 && (
             <div className="card">

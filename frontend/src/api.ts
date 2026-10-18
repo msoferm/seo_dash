@@ -80,6 +80,7 @@ export interface Task {
   note: string | null;
   source_type: string | null;
   source_ref: string | null;
+  due_date: string | null;
 }
 
 export interface SuggestionAttachment {
@@ -792,6 +793,13 @@ export async function rejectAuditIssue(id: number): Promise<void> {
 
 export async function resetAuditIssue(id: number): Promise<void> {
   const { error } = await supabase.from("audit_issues").update({ status: "pending", applied_note: null }).eq("id", id);
+  if (error) throw error;
+}
+
+export async function setAuditStatus(id: number, status: "pending" | "applied" | "rejected", note?: string): Promise<void> {
+  const patch: any = { status };
+  if (note !== undefined) patch.applied_note = note;
+  const { error } = await supabase.from("audit_issues").update(patch).eq("id", id);
   if (error) throw error;
 }
 
