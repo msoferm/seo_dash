@@ -83,6 +83,7 @@ export interface Task {
   due_date: string | null;
   preview: string | null;
   writes_text: boolean;
+  page_url: string | null;
 }
 
 export interface SuggestionAttachment {

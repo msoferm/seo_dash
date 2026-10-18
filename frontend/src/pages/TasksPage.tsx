@@ -73,6 +73,7 @@ function SubtaskRow({ t, cid, onAction, onPreview, busy, previewing, execError, 
             <span className={`badge ${isClaude ? "bg-brand-50 text-brand-700" : "bg-violet-50 text-violet-700"}`}>
               {isClaude ? <><Bot size={11} /> קלוד מבצע</> : <><User size={11} /> ידני + הנחיה</>}
             </span>
+            {t.page_url && <a href={t.page_url} target="_blank" rel="noreferrer" className="text-xs text-sky-700 hover:underline inline-flex items-center gap-0.5 font-medium" title={t.page_url}><ExternalLink size={11} /> העמוד באתר</a>}
             {link && <Link to={link.href} className="text-xs text-brand-600 hover:underline inline-flex items-center gap-0.5"><ExternalLink size={11} /> {link.label}</Link>}
             {done && t.source_type === "recommendation" && <Link to={`/clients/${cid}/impact`} className="text-xs text-emerald-600 hover:underline inline-flex items-center gap-0.5"><Activity size={11} /> מעקב השפעה</Link>}
           </div>

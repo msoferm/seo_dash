@@ -40,7 +40,7 @@ interface Sub {
   key: string; pillar: string; kind: string; title: string; details: string;
   source_type: string; source_ref: string;
   month: number; priority: string; impact: string; effort: string; note: string | null;
-  writes_text?: boolean; due_date?: string;
+  writes_text?: boolean; page_url?: string | null; due_date?: string;
 }
 const WRITES_TEXT_REC = new Set(["new_content", "improve_page", "title_meta", "add_keywords"]);
 
@@ -79,8 +79,8 @@ Deno.serve(async (req) => {
     if (!client) return errorResponse("לקוח לא נמצא", 404);
 
     const [recRes, auditRes, forumRes, prospectRes, pagesRes, convRes] = await Promise.all([
-      sb.from("recommendations").select("id, type, title, action, opportunity, potential").eq("client_id", client_id).eq("status", "pending").limit(25),
-      sb.from("audit_issues").select("id, issue, fix, severity").eq("client_id", client_id).eq("status", "pending").limit(15),
+      sb.from("recommendations").select("id, type, title, action, opportunity, potential, page").eq("client_id", client_id).eq("status", "pending").limit(25),
+      sb.from("audit_issues").select("id, issue, fix, severity, page").eq("client_id", client_id).eq("status", "pending").limit(15),
       sb.from("forum_leads").select("id").eq("client_id", client_id).eq("status", "new"),
       sb.from("link_prospects").select("id").eq("client_id", client_id).eq("status", "new"),
       sb.from("pages").select("id, has_faq").eq("client_id", client_id),
@@ -94,7 +94,7 @@ Deno.serve(async (req) => {
     const subs: Sub[] = [];
     const push = (s: Partial<Sub> & { pillar: string; kind: string; title: string; source_type: string; source_ref: string; key: string }) =>
       subs.push({
-        details: "", note: null, writes_text: false, month: DEFAULT_MONTH[s.pillar] ?? 2, priority: "medium", impact: "medium", effort: "medium",
+        details: "", note: null, writes_text: false, page_url: null, month: DEFAULT_MONTH[s.pillar] ?? 2, priority: "medium", impact: "medium", effort: "medium",
         ...s,
       } as Sub);
 
@@ -102,7 +102,7 @@ Deno.serve(async (req) => {
     for (const r of recs) push({
       key: `rec:${r.id}`, pillar: pillarForRec(r.type), kind: CLAUDE_REC_TYPES.has(r.type) ? "claude" : "manual",
       title: (r.title || "").slice(0, 160), details: (r.action || r.opportunity || "").slice(0, 300),
-      source_type: "recommendation", source_ref: String(r.id),
+      source_type: "recommendation", source_ref: String(r.id), page_url: r.page || null,
       priority: r.potential && ["high", "medium", "low"].includes(r.potential) ? r.potential : "medium",
       impact: r.potential && ["high", "medium", "low"].includes(r.potential) ? r.potential : "medium",
       writes_text: WRITES_TEXT_REC.has(r.type),
@@ -110,7 +110,7 @@ Deno.serve(async (req) => {
     for (const a of audits) push({
       key: `audit:${a.id}`, pillar: auditPillar(a.issue || ""), kind: "claude",
       title: (a.issue || "").slice(0, 160), details: (a.fix || "").slice(0, 300),
-      source_type: "audit", source_ref: String(a.id),
+      source_type: "audit", source_ref: String(a.id), page_url: a.page || null,
       priority: a.severity === "high" ? "high" : a.severity === "low" ? "low" : "medium",
       writes_text: auditPillar(a.issue || "") === "content",
     });
@@ -169,7 +169,7 @@ Deno.serve(async (req) => {
       .map((s, i) => ({
         client_id, parent_id: pillarId.get(s.pillar)!, category: s.pillar, is_pillar: false,
         title: s.title, details: s.details || null, kind: s.kind, target_month: s.month, due_date: s.due_date || null,
-        writes_text: !!s.writes_text, priority: s.priority, impact: s.impact, effort: s.effort, note: s.note,
+        writes_text: !!s.writes_text, page_url: s.page_url || null, priority: s.priority, impact: s.impact, effort: s.effort, note: s.note,
         source_type: s.source_type, source_ref: s.source_ref || null, source: "plan", status: "open", sort_order: i,
       }));
     for (let i = 0; i < rows.length; i += 200) {
