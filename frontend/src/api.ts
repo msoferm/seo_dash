@@ -57,17 +57,29 @@ export interface ChatSession {
   updated_at: string;
 }
 
+export type TaskStatus = "open" | "done" | "ignored";
+export type Level = "high" | "medium" | "low";
 export interface Task {
   id: number;
   client_id: number;
   title: string;
   details: string | null;
-  status: "open" | "done";
-  source: "manual" | "claude" | "upload";
-  priority: "high" | "medium" | "low" | null;
+  status: TaskStatus;
+  source: "manual" | "claude" | "upload" | "plan";
+  priority: Level | null;
   sort_order: number;
   created_at: string;
   done_at: string | null;
+  parent_id: number | null;
+  category: string | null;
+  is_pillar: boolean;
+  kind: "claude" | "manual" | null;
+  target_month: number | null;
+  impact: Level | null;
+  effort: Level | null;
+  note: string | null;
+  source_type: string | null;
+  source_ref: string | null;
 }
 
 export interface SuggestionAttachment {
@@ -976,6 +988,23 @@ export async function bulkCreateTasks(clientId: number, titles: string[]): Promi
 
 export async function suggestTasks(clientId: number): Promise<{ created: number; tasks: Task[] }> {
   return await invokeFn("tasks-suggest", { client_id: clientId });
+}
+
+/** Build the strategic 3-month plan (pillars + subtasks) from all the system's data. */
+export async function generateWorkPlan(clientId: number): Promise<{ created: number; pillars: number; note?: string }> {
+  return await invokeFn("work-plan", { client_id: clientId });
+}
+
+/** Generate step-by-step guidance for a manual subtask (stores it + marks done). */
+export async function guideTask(taskId: number): Promise<{ note: string }> {
+  return await invokeFn("task-guide", { task_id: taskId });
+}
+
+export async function setTaskStatus(id: number, status: TaskStatus, note?: string): Promise<void> {
+  const patch: any = { status, done_at: status === "done" ? new Date().toISOString() : null };
+  if (note !== undefined) patch.note = note;
+  const { error } = await supabase.from("tasks").update(patch).eq("id", id);
+  if (error) throw error;
 }
 
 // ===== Suggestions (הצעות ייעול) — a single shared board across the whole team =====
