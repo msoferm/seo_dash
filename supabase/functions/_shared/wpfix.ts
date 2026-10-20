@@ -1,5 +1,5 @@
 /** Shared WordPress page-editing helpers (used by audit-fix and recommendation-apply). */
-import { callClaude, DEFAULT_MODEL, textOf } from "./anthropic.ts";
+import { callClaude, DEFAULT_MODEL, textOf, extractJson } from "./anthropic.ts";
 import { hasBridge, applyElementorFix } from "./bridge.ts";
 
 export function normalizeSite(u: string): string {
@@ -52,29 +52,35 @@ export async function applyPageFix(cw: any, page: string, instruction: string): 
   const curExcerpt = c.excerpt?.raw || "";
   const curContent = c.content?.raw || "";
 
+  // Targeted edits only (small output → fast, no 150s timeout, and safer: never rewrites the
+  // whole page). Claude returns title/meta + exact find→replace snippets + an optional section.
   const system =
-    "אתה מומחה SEO שמבצע שיפור נקודתי בעמוד WordPress קיים. יישם אך ורק את השינוי המבוקש ושמר על כל שאר התוכן בדיוק כפי שהוא. " +
-    "אל תמחק תוכן, אל תשנה עיצוב, אל תוסיף תוכן שלא נדרש. " +
-    "חשוב: ב-WordPress כותרת ה-H1 הנראית בעמוד היא שדה ה-TITLE של העמוד, ולרוב אינה מופיעה בתוך ה-HTML של גוף התוכן. " +
-    "לכן שינוי של H1 / כותרת ראשית מתבצע דרך שדה TITLE, ולא דרך CONTENT. החזר בפורמט המדויק (בלי טקסט נוסף):\n" +
-    "TITLE: <הכותרת/H1 המעודכנת, או KEEP אם אין שינוי>\n" +
-    "EXCERPT: <תיאור מטא מעודכן, או KEEP אם אין שינוי>\n" +
-    "CONTENT:\n<ה-HTML המלא לאחר השינוי — כל התוכן המקורי משומר, רק השיפור הוחל. אם אין צורך לשנות תוכן, כתוב KEEP>";
+    "אתה מומחה SEO שמבצע שיפור נקודתי בעמוד WordPress, בעריכות ממוקדות בלבד (לא שכתוב של כל העמוד). " +
+    "ב-WordPress כותרת ה-H1 הנראית בעמוד היא שדה ה-TITLE, ולרוב אינה בתוך גוף התוכן. " +
+    "החזר אך ורק JSON: " +
+    '{"title":"<כותרת/H1 חדשה או KEEP>","excerpt":"<תיאור מטא חדש או KEEP>","replacements":[{"find":"<טקסט מדויק שמופיע בתוכן הנוכחי>","replace":"<הטקסט החדש>"}],"append_html":"<HTML של קטע חדש להוספה בסוף העמוד, או מחרוזת ריקה>"}. ' +
+    "כל find חייב להיות מחרוזת מדויקת מהתוכן הנוכחי (העתק מילה-במילה). בצע שינוי מינימלי, אל תמחק תוכן. אם אין מה לשנות החזר replacements ריק, title/excerpt=KEEP ו-append_html ריק. התחל ישירות ב-{.";
   const userMsg =
-    `שיפור לביצוע: ${instruction}\n\nכותרת (H1) נוכחית: ${curTitle || "(ריק)"}\nתיאור מטא נוכחי: ${curExcerpt || "(ריק)"}\n\nתוכן HTML נוכחי:\n${curContent.slice(0, 20000)}`;
+    `שיפור לביצוע: ${instruction}\n\nכותרת (H1) נוכחית: ${curTitle || "(ריק)"}\nתיאור מטא נוכחי: ${curExcerpt || "(ריק)"}\n\nתוכן HTML נוכחי:\n${curContent.slice(0, 12000)}`;
 
-  const resp = await callClaude({ model: DEFAULT_MODEL, max_tokens: 8000, system, messages: [{ role: "user", content: userMsg }] });
-  const text = textOf(resp);
-  const newTitle = (text.match(/TITLE:\s*(.+)/)?.[1] || "").trim();
-  const newExcerpt = (text.match(/EXCERPT:\s*(.+)/)?.[1] || "").trim();
-  let newContent = (text.match(/CONTENT:\s*([\s\S]+)$/)?.[1] || "").trim();
-  newContent = newContent.replace(/^```(?:html)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  const resp = await callClaude({ model: DEFAULT_MODEL, max_tokens: 3000, system, messages: [{ role: "user", content: userMsg }] });
+  let p: any; try { p = extractJson(textOf(resp)); } catch { return { applied: false, note: "לא התקבלה תשובה תקינה מהמנוע לעריכת העמוד." }; }
+
+  const newTitle = String(p.title || "").trim();
+  const newExcerpt = String(p.excerpt || "").trim();
+  let newContent = curContent; let contentChanged = false;
+  for (const r of (p.replacements || [])) {
+    const find = String(r.find || ""); const rep = String(r.replace || "");
+    if (find && find !== rep && newContent.includes(find)) { newContent = newContent.split(find).join(rep); contentChanged = true; }
+  }
+  const append = String(p.append_html || "").trim();
+  if (append.length > 20 && !curContent.includes(append)) { newContent = `${newContent}\n${append}`; contentChanged = true; }
 
   const update: any = {};
   if (newTitle && newTitle !== "KEEP" && newTitle !== curTitle) update.title = newTitle;
   if (newExcerpt && newExcerpt !== "KEEP" && newExcerpt !== curExcerpt) update.excerpt = newExcerpt;
-  if (newContent && newContent !== "KEEP" && newContent.length > 40 && newContent !== curContent) update.content = newContent;
-  if (Object.keys(update).length === 0) return { applied: false, note: "לא בוצע שינוי בפועל — קלוד קבע שאין מה לשנות, או שה-H1/התוכן מנוהל ע\"י בילדר (Elementor) ולא ניתן לעדכון דרך העורך." };
+  if (contentChanged && newContent !== curContent) update.content = newContent;
+  if (Object.keys(update).length === 0) return { applied: false, note: "לא בוצע שינוי בפועל — לא נמצאה התאמה מדויקת לעריכה או שאין מה לשנות." };
 
   const up = await fetch(`${site}/wp-json/wp/v2/${target.type}/${target.id}`, {
     method: "POST", headers: { Authorization: auth, "Content-Type": "application/json" }, body: JSON.stringify(update),

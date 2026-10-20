@@ -53,6 +53,7 @@ function SubtaskRow({ t, cid, onAction, onPreview, busy, previewing, execError, 
   const link = deepLink(cid, t);
   const isClaude = t.kind === "claude";
   const pillar = showPillar && t.category ? PILLAR_META[t.category] : null;
+  const overdue = t.status === "open" && !!t.due_date && t.due_date < new Date().toISOString().slice(0, 10);
 
   return (
     <li className="py-3 border-b border-slate-100 last:border-0">
@@ -68,7 +69,8 @@ function SubtaskRow({ t, cid, onAction, onPreview, busy, previewing, execError, 
 
           <div className="flex flex-wrap gap-1.5 mt-1.5 items-center">
             {pillar && <span className="badge bg-slate-100 text-slate-600 inline-flex items-center gap-1"><pillar.icon size={11} /> {pillar.label}</span>}
-            {t.due_date && <span className="badge bg-indigo-50 text-indigo-700 inline-flex items-center gap-1"><CalendarDays size={11} /> {fmtDate(t.due_date)}</span>}
+            {t.due_date && <span className={`badge inline-flex items-center gap-1 ${overdue ? "bg-rose-50 text-rose-700" : "bg-indigo-50 text-indigo-700"}`}><CalendarDays size={11} /> {fmtDate(t.due_date)}</span>}
+            {overdue && <span className="badge bg-rose-100 text-rose-700">באיחור</span>}
             {t.priority && <span className={`badge ${PRIORITY_BADGE[t.priority]}`}>עדיפות {PRIORITY_LABEL[t.priority]}</span>}
             <span className={`badge ${isClaude ? "bg-brand-50 text-brand-700" : "bg-violet-50 text-violet-700"}`}>
               {isClaude ? <><Bot size={11} /> קלוד מבצע</> : <><User size={11} /> ידני + הנחיה</>}
