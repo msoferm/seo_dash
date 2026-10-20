@@ -749,6 +749,52 @@ export async function getImpactStats(clientId: number): Promise<ImpactRow[]> {
   }));
 }
 
+// ===== Activity log (what was done) — for the annual client report =====
+export interface ActivityEntry {
+  id: string; date: string | null; area: string; title: string; page: string | null; note: string | null;
+  kind: "recommendation" | "audit" | "task";
+  clicks_before?: number; clicks_now?: number; impressions_before?: number; impressions_now?: number;
+}
+const REC_AREA: Record<string, string> = {
+  title_meta: "תוכן על-עמודי", improve_page: "תוכן על-עמודי", add_keywords: "תוכן על-עמודי",
+  new_content: "תוכן חדש", internal_link: "קישורים פנימיים", cannibalization: "קניבליזציה",
+  performance_drop: "שחזור ביצועים", technical: "טכני",
+};
+const PILLAR_AREA: Record<string, string> = {
+  technical: "תשתית טכנית", speed: "מהירות", content: "תוכן על-עמודי", traffic: "הרחבת תנועה",
+  authority: "סמכות וקישורים", conversions: "המרות ו-UX",
+};
+
+/** Unified log of everything done (applied recs, applied audit fixes, completed manual tasks). */
+export async function getActivityLog(clientId: number): Promise<ActivityEntry[]> {
+  const [recsR, auditsR, tasksR, impact] = await Promise.all([
+    supabase.from("recommendations").select("id, type, title, page, applied_note, applied_at").eq("client_id", clientId).in("status", ["applied", "done"]),
+    supabase.from("audit_issues").select("id, issue, page, applied_note, created_at").eq("client_id", clientId).eq("status", "applied"),
+    supabase.from("tasks").select("*").eq("client_id", clientId).eq("status", "done"),
+    getImpactStats(clientId).catch(() => [] as ImpactRow[]),
+  ]);
+  if (recsR.error) throw recsR.error;
+  const impByRec = new Map<number, ImpactRow>((impact || []).map((r) => [r.rec_id, r]));
+  const out: ActivityEntry[] = [];
+
+  for (const r of recsR.data || []) {
+    const im = impByRec.get(r.id);
+    out.push({
+      id: `rec:${r.id}`, date: r.applied_at, area: REC_AREA[r.type] || "תוכן", title: r.title, page: r.page, note: r.applied_note,
+      kind: "recommendation",
+      clicks_before: im?.clicks_before, clicks_now: im?.clicks_now, impressions_before: im?.impressions_before, impressions_now: im?.impressions_now,
+    });
+  }
+  for (const a of auditsR.data || []) {
+    out.push({ id: `audit:${a.id}`, date: a.created_at, area: "אודיט טכני", title: a.issue, page: a.page, note: a.applied_note, kind: "audit" });
+  }
+  for (const t of tasksR.data || []) {
+    if (t.source_type === "recommendation" || t.source_type === "audit") continue; // covered above
+    out.push({ id: `task:${t.id}`, date: t.done_at || t.due_date, area: PILLAR_AREA[t.category || ""] || "משימה", title: t.title, page: t.page_url, note: t.note, kind: "task" });
+  }
+  return out.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+}
+
 // ===== All-pages master =====
 export interface PageStat { page: string; clicks: number; impressions: number; ctr: number; position: number }
 export async function getPageStats(clientId: number, from: string, to: string): Promise<PageStat[]> {
@@ -804,6 +850,31 @@ export async function setAuditStatus(id: number, status: "pending" | "applied" |
   if (note !== undefined) patch.applied_note = note;
   const { error } = await supabase.from("audit_issues").update(patch).eq("id", id);
   if (error) throw error;
+}
+
+// ===== EEAT / relevance analyzer =====
+export interface EeatScore { score: number; note: string }
+export interface EeatResult {
+  page_url: string; keyword: string; title: string; h1: string; meta_description: string;
+  overall_score: number;
+  relevance: { score: number; verdict: string };
+  direct_answer: { answers_directly: boolean; early: boolean; explanation: string; suggested_snippet: string };
+  eeat: { experience: EeatScore; expertise: EeatScore; authoritativeness: EeatScore; trust: EeatScore };
+  fixes: string[];
+}
+export async function analyzeEeat(clientId: number, pageUrl: string, keyword: string): Promise<EeatResult> {
+  return await invokeFn("eeat-analyze", { client_id: clientId, page_url: pageUrl, keyword });
+}
+/** Push the analyzer's fixes into the recommendation engine (→ flows to tasks + impact). */
+export async function addFixesAsRecommendations(clientId: number, pageUrl: string, keyword: string, fixes: string[]): Promise<number> {
+  const rows = fixes.map((f) => ({
+    client_id: clientId, type: "improve_page", page: pageUrl, keyword,
+    title: f.slice(0, 200), action: f, opportunity: `EEAT/רלוונטיות: ${keyword}`,
+    potential: "medium", status: "pending", source: "eeat",
+  }));
+  const { data, error } = await supabase.from("recommendations").insert(rows).select("id");
+  if (error) throw error;
+  return data?.length || 0;
 }
 
 // ===== Auto-blog (WordPress) =====

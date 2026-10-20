@@ -1,5 +1,5 @@
 import { Routes, Route, NavLink, useParams, Link } from "react-router-dom";
-import { Users, BarChart3, Search, MessageSquare, HelpCircle, Home, LogOut, Target, ClipboardList, Lightbulb, FileText, Wand2, Radar, Stethoscope, Newspaper, Sparkles, LayoutList, Activity, Upload } from "lucide-react";
+import { Users, BarChart3, Search, MessageSquare, HelpCircle, Home, LogOut, Target, ClipboardList, Lightbulb, FileText, Wand2, Radar, Stethoscope, Newspaper, Sparkles, LayoutList, Activity, Upload, ClipboardCheck } from "lucide-react";
 import { useAuth } from "./AuthContext";
 import ClientsPage from "./pages/ClientsPage";
 import ClientDashboard from "./pages/ClientDashboard";
@@ -13,6 +13,7 @@ import RecommendationsPage from "./pages/RecommendationsPage";
 import RecEnginePage from "./pages/RecEnginePage";
 import PagesMasterPage from "./pages/PagesMasterPage";
 import ImpactPage from "./pages/ImpactPage";
+import ActivityPage from "./pages/ActivityPage";
 import DataUploadPage from "./pages/DataUploadPage";
 import ProspectsPage from "./pages/ProspectsPage";
 import SeoToolsPage from "./pages/SeoToolsPage";
@@ -71,6 +72,9 @@ function Sidebar() {
           </NavLink>
           <NavLink to={`/clients/${cid}/impact`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
             <Activity size={18} /> מעקב השפעה
+          </NavLink>
+          <NavLink to={`/clients/${cid}/activity`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
+            <ClipboardCheck size={18} /> תיעוד ביצועים
           </NavLink>
           <NavLink to={`/clients/${cid}/upload`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
             <Upload size={18} /> העלאת נתונים
@@ -134,6 +138,7 @@ export default function App() {
       <Route path="/clients/:clientId/engine" element={<Layout><RecEnginePage /></Layout>} />
       <Route path="/clients/:clientId/pages" element={<Layout><PagesMasterPage /></Layout>} />
       <Route path="/clients/:clientId/impact" element={<Layout><ImpactPage /></Layout>} />
+      <Route path="/clients/:clientId/activity" element={<Layout><ActivityPage /></Layout>} />
       <Route path="/clients/:clientId/upload" element={<Layout><DataUploadPage /></Layout>} />
       <Route path="/clients/:clientId/recommendations" element={<Layout><RecommendationsPage /></Layout>} />
       <Route path="/clients/:clientId/prospects" element={<Layout><ProspectsPage /></Layout>} />

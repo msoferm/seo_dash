@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Stethoscope, FileText, Loader2, Copy, Check, Wrench, X, Pencil, RotateCcw } from "lucide-react";
+import { Stethoscope, FileText, Loader2, Copy, Check, Wrench, X, Pencil, RotateCcw, ShieldCheck, Target, Plus } from "lucide-react";
 import * as api from "../api";
-import type { AuditIssueRow, AuditSeverity } from "../api";
+import type { AuditIssueRow, AuditSeverity, EeatResult } from "../api";
 import PageHeader from "../components/PageHeader";
 
 const SEV_BADGE: Record<AuditSeverity, string> = {
@@ -31,6 +31,13 @@ export default function SeoToolsPage() {
   const [keyword, setKeyword] = useState("");
   const brief = useMutation({ mutationFn: (kw: string) => api.generateContentBrief(cid, kw) });
   const [copied, setCopied] = useState(false);
+
+  // EEAT / relevance analyzer
+  const [eeatUrl, setEeatUrl] = useState("");
+  const [eeatKw, setEeatKw] = useState("");
+  const eeat = useMutation({ mutationFn: () => api.analyzeEeat(cid, eeatUrl.trim(), eeatKw.trim()) });
+  const addRecs = useMutation({ mutationFn: (r: EeatResult) => api.addFixesAsRecommendations(cid, r.page_url, r.keyword, r.fixes) });
+  const [snipCopied, setSnipCopied] = useState(false);
 
   function copyBrief() {
     const b = brief.data; if (!b) return;
@@ -123,6 +130,69 @@ export default function SeoToolsPage() {
         )}
         {apply.isError && <div className="text-sm text-rose-600 mt-2">שגיאה בביצוע התיקון: {(apply.error as any)?.message}</div>}
         {audit.data && <p className="text-xs text-slate-400 mt-2">נבדקו {audit.data.pages_checked} עמודים.</p>}
+      </div>
+
+      {/* EEAT / relevance analyzer */}
+      <div className="card mb-6">
+        <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-1"><ShieldCheck size={18} className="text-brand-600" /> ניתוח רלוונטיות ו-EEAT</h3>
+        <p className="text-xs text-slate-500 mb-3">בודק: האם העמוד רלוונטי למילת המפתח, האם הוא נותן תשובה ישירה ומוקדמת (מוכנות ל-Featured Snippet), ואותות E-E-A-T (ניסיון, מומחיות, סמכות, אמון).</p>
+        <div className="flex flex-wrap gap-2 mb-3">
+          <input className="input flex-1 min-w-[240px]" placeholder="כתובת העמוד (https://...)" value={eeatUrl} onChange={(e) => setEeatUrl(e.target.value)} />
+          <input className="input w-56" placeholder="מילת מפתח יעד" value={eeatKw} onChange={(e) => setEeatKw(e.target.value)} />
+          <button className="btn-primary shrink-0" onClick={() => eeat.mutate()} disabled={eeat.isPending || !eeatUrl.trim() || !eeatKw.trim()}>
+            {eeat.isPending ? <Loader2 size={18} className="animate-spin" /> : <Target size={18} />} נתח
+          </button>
+        </div>
+        {eeat.isError && <div className="text-sm text-rose-600">{(eeat.error as any)?.message}</div>}
+        {eeat.data && (() => {
+          const r = eeat.data;
+          const bar = (s: number) => <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden w-24"><div className={`h-full ${s >= 70 ? "bg-emerald-500" : s >= 40 ? "bg-amber-500" : "bg-rose-500"}`} style={{ width: `${Math.max(3, s)}%` }} /></div>;
+          const row = (label: string, s: number, note: string) => (
+            <div className="flex items-start gap-2 py-1">
+              <span className="w-20 text-slate-600 shrink-0">{label}</span>{bar(s)}<span className="text-slate-500 text-xs flex-1">{note}</span>
+            </div>
+          );
+          return (
+            <div className="space-y-3 text-sm border-t border-slate-100 pt-3">
+              <div className="flex items-center gap-2">
+                <span className={`text-2xl font-bold ${r.overall_score >= 70 ? "text-emerald-600" : r.overall_score >= 40 ? "text-amber-600" : "text-rose-600"}`}>{r.overall_score}</span>
+                <span className="text-slate-400">/ 100 ציון כולל</span>
+              </div>
+              <div><span className="font-semibold text-slate-800">רלוונטיות ({r.relevance.score}): </span><span className="text-slate-700">{r.relevance.verdict}</span></div>
+              <div className={`rounded-lg p-3 ${r.direct_answer.answers_directly && r.direct_answer.early ? "bg-emerald-50" : "bg-amber-50"}`}>
+                <div className="font-semibold text-slate-800">תשובה ישירה: {r.direct_answer.answers_directly ? "כן" : "לא"}{r.direct_answer.early ? " · מוקדם בעמוד" : " · לא מוקדם מספיק"}</div>
+                <div className="text-slate-600 text-xs mt-0.5">{r.direct_answer.explanation}</div>
+                {r.direct_answer.suggested_snippet && (
+                  <div className="mt-2">
+                    <div className="text-xs text-slate-500 mb-1">פסקת תשובה מוצעת לראש העמוד:</div>
+                    <div className="bg-white rounded p-2 text-slate-700">{r.direct_answer.suggested_snippet}</div>
+                    <button className="btn-secondary text-xs py-1 px-2 mt-1" onClick={() => { navigator.clipboard.writeText(r.direct_answer.suggested_snippet); setSnipCopied(true); setTimeout(() => setSnipCopied(false), 1500); }}>{snipCopied ? <Check size={13} /> : <Copy size={13} />} העתק</button>
+                  </div>
+                )}
+              </div>
+              <div>
+                <div className="font-semibold text-slate-800 mb-1">E-E-A-T</div>
+                {row("ניסיון", r.eeat.experience.score, r.eeat.experience.note)}
+                {row("מומחיות", r.eeat.expertise.score, r.eeat.expertise.note)}
+                {row("סמכות", r.eeat.authoritativeness.score, r.eeat.authoritativeness.note)}
+                {row("אמון", r.eeat.trust.score, r.eeat.trust.note)}
+              </div>
+              {r.fixes?.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-semibold text-slate-800">תיקונים מומלצים</span>
+                    <button className="btn-secondary text-xs py-1 px-2" onClick={() => addRecs.mutate(r)} disabled={addRecs.isPending}>
+                      {addRecs.isPending ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} הוסף כהמלצות
+                    </button>
+                  </div>
+                  <ul className="list-disc list-inside text-slate-700 space-y-0.5">{r.fixes.map((f, i) => <li key={i}>{f}</li>)}</ul>
+                  {addRecs.isSuccess && <div className="text-xs text-emerald-600 mt-1">נוספו {addRecs.data} המלצות — יופיעו במנוע ההמלצות ובלוח המשימות.</div>}
+                  {addRecs.isError && <div className="text-xs text-rose-600 mt-1">{(addRecs.error as any)?.message}</div>}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Content brief */}

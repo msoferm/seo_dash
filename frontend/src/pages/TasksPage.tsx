@@ -10,6 +10,8 @@ import * as api from "../api";
 import type { Task, Level, RecStatus } from "../api";
 import PageHeader from "../components/PageHeader";
 import Spinner from "../components/Spinner";
+import TaskAssistant, { AssistantFab } from "./TaskAssistant";
+import { MessageCircle } from "lucide-react";
 
 const PILLAR_META: Record<string, { label: string; icon: typeof Wrench }> = {
   technical: { label: "תשתית טכנית ואינדוקס", icon: Wrench },
@@ -38,10 +40,10 @@ function fmtDate(d: string | null): string {
 }
 
 /* ---------- Subtask row ---------- */
-function SubtaskRow({ t, cid, onAction, onPreview, busy, previewing, execError, showPillar }: {
+function SubtaskRow({ t, cid, onAction, onPreview, onAsk, busy, previewing, execError, showPillar }: {
   t: Task; cid: number;
   onAction: (t: Task, action: Action, note?: string) => void;
-  onPreview: (t: Task) => void;
+  onPreview: (t: Task) => void; onAsk: (t: Task) => void;
   busy: boolean; previewing: boolean; execError?: string; showPillar?: boolean;
 }) {
   const [showNote, setShowNote] = useState(false);
@@ -127,11 +129,13 @@ function SubtaskRow({ t, cid, onAction, onPreview, busy, previewing, execError, 
               <button className="btn-secondary text-xs py-1 px-2" onClick={() => setShowNote(true)} title="בצע עם הנחיה/הערה"><MessageSquare size={13} /> בצע + הערה</button>
               <button className="btn-secondary text-xs py-1 px-2" onClick={() => onAction(t, "done")} title="סמן כבוצע (בלי הרצה)"><CheckCheck size={13} /> בוצע</button>
               <button className="text-xs py-1 px-2 rounded text-slate-500 hover:bg-slate-100" onClick={() => onAction(t, "ignore")}>התעלם</button>
+              <button className="text-xs py-1 px-2 rounded text-brand-600 hover:bg-brand-50 inline-flex items-center gap-1" onClick={() => onAsk(t)} title="שאל את קלוד על המשימה"><MessageCircle size={13} /> שאל</button>
             </div>
           )}
           {t.status !== "open" && (
-            <div className="mt-2">
+            <div className="mt-2 flex gap-2">
               <button className="text-xs py-1 px-2 rounded text-brand-600 hover:bg-brand-50" onClick={() => onAction(t, "reopen")}>החזר לפתוח</button>
+              <button className="text-xs py-1 px-2 rounded text-brand-600 hover:bg-brand-50 inline-flex items-center gap-1" onClick={() => onAsk(t)} title="שאל את קלוד על המשימה"><MessageCircle size={13} /> שאל</button>
             </div>
           )}
         </div>
@@ -141,9 +145,9 @@ function SubtaskRow({ t, cid, onAction, onPreview, busy, previewing, execError, 
 }
 
 /* ---------- Pillar card ---------- */
-function PillarCard({ pillar, subs, cid, onAction, onPreview, busyId, previewId, execErr }: {
+function PillarCard({ pillar, subs, cid, onAction, onPreview, onAsk, busyId, previewId, execErr }: {
   pillar: Task; subs: Task[]; cid: number;
-  onAction: (t: Task, action: Action, note?: string) => void; onPreview: (t: Task) => void;
+  onAction: (t: Task, action: Action, note?: string) => void; onPreview: (t: Task) => void; onAsk: (t: Task) => void;
   busyId?: number; previewId?: number; execErr?: { id: number; msg: string };
 }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -165,7 +169,7 @@ function PillarCard({ pillar, subs, cid, onAction, onPreview, busyId, previewId,
       </div>
       {!collapsed && (
         <ul className="mt-2">
-          {subs.map((s) => <SubtaskRow key={s.id} t={s} cid={cid} onAction={onAction} onPreview={onPreview} busy={busyId === s.id} previewing={previewId === s.id} execError={execErr?.id === s.id ? execErr.msg : undefined} />)}
+          {subs.map((s) => <SubtaskRow key={s.id} t={s} cid={cid} onAction={onAction} onPreview={onPreview} onAsk={onAsk} busy={busyId === s.id} previewing={previewId === s.id} execError={execErr?.id === s.id ? execErr.msg : undefined} />)}
         </ul>
       )}
     </div>
@@ -178,7 +182,10 @@ export default function TasksPage() {
   const qc = useQueryClient();
   const [newTitle, setNewTitle] = useState("");
   const [view, setView] = useState<"pillars" | "agenda">("pillars");
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatSeed, setChatSeed] = useState<{ task: Task; nonce: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const onAsk = (t: Task) => { setChatSeed({ task: t, nonce: Date.now() }); setChatOpen(true); };
 
   const { data: tasks, isLoading } = useQuery({ queryKey: ["tasks", cid], queryFn: () => api.listTasks(cid), enabled: !!cid });
   const invalidate = () => qc.invalidateQueries({ queryKey: ["tasks", cid] });
@@ -304,7 +311,7 @@ export default function TasksPage() {
       ) : (
         <div className="space-y-4">
           {view === "pillars" && pillars.map((p) => (
-            <PillarCard key={p.id} pillar={p} subs={subsByPillar(p.id)} cid={cid} onAction={onAction} onPreview={onPreview} busyId={busyId} previewId={previewId} execErr={execErr} />
+            <PillarCard key={p.id} pillar={p} subs={subsByPillar(p.id)} cid={cid} onAction={onAction} onPreview={onPreview} onAsk={onAsk} busyId={busyId} previewId={previewId} execErr={execErr} />
           ))}
 
           {view === "agenda" && dateKeys.map((dk) => {
@@ -321,7 +328,7 @@ export default function TasksPage() {
                   <span className="text-xs font-normal text-slate-400">({openCount} פתוחות)</span>
                 </h3>
                 <ul>
-                  {items.map((s) => <SubtaskRow key={s.id} t={s} cid={cid} onAction={onAction} onPreview={onPreview} busy={busyId === s.id} previewing={previewId === s.id} execError={execErr?.id === s.id ? execErr.msg : undefined} showPillar />)}
+                  {items.map((s) => <SubtaskRow key={s.id} t={s} cid={cid} onAction={onAction} onPreview={onPreview} onAsk={onAsk} busy={busyId === s.id} previewing={previewId === s.id} execError={execErr?.id === s.id ? execErr.msg : undefined} showPillar />)}
                 </ul>
               </div>
             );
@@ -346,6 +353,9 @@ export default function TasksPage() {
           )}
         </div>
       )}
+
+      <AssistantFab onClick={() => { setChatSeed(null); setChatOpen(true); }} />
+      <TaskAssistant cid={cid} open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} />
     </div>
   );
 }
