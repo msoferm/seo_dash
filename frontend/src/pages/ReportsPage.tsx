@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Plus, Trash2, Loader2, ArrowLeft, Sparkles } from "lucide-react";
+import { FileText, Plus, Trash2, Loader2, ArrowLeft, Sparkles, ListChecks } from "lucide-react";
 import * as api from "../api";
 import type { Report } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -87,15 +87,28 @@ export default function ReportsPage() {
     onSuccess: invalidate,
   });
 
+  const addToLatest = useMutation({
+    mutationFn: () => api.addToLatestReport(cid),
+    onSuccess: (res) => {
+      if (!res) { alert("אין עדיין דוח. צור דוח חדש ואז הוסף אליו את הפעולות."); return; }
+      navigate(`/clients/${cid}/reports/${res.report_id}`);
+    },
+  });
+
   return (
     <div>
       <PageHeader
         title="דוחות קידום"
         subtitle={client ? `${client.name} · דוחות חודשיים ללקוח` : "דוחות חודשיים ללקוח"}
         actions={
-          <button className="btn-primary" onClick={() => setCreating((c) => !c)}>
-            <Plus size={18} /> דוח חדש
-          </button>
+          <>
+            <button className="btn-secondary" onClick={() => addToLatest.mutate()} disabled={addToLatest.isPending} title="מושך את כל הפעולות שבוצעו במערכת אל הדוח האחרון">
+              {addToLatest.isPending ? <Loader2 size={18} className="animate-spin" /> : <ListChecks size={18} />} הוסף לדוח האחרון
+            </button>
+            <button className="btn-primary" onClick={() => setCreating((c) => !c)}>
+              <Plus size={18} /> דוח חדש
+            </button>
+          </>
         }
       />
 

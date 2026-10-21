@@ -9,6 +9,7 @@ import * as api from "../api";
 import Spinner from "../components/Spinner";
 import KpiCard from "../components/KpiCard";
 import OrganicTrafficChart from "../components/OrganicTrafficChart";
+import ReportItems from "../components/ReportItems";
 import { reportLabel } from "./ReportsPage";
 
 function num(n: number | null | undefined): string {
@@ -171,6 +172,9 @@ export default function ReportView() {
             <p className="text-slate-400 text-sm">אין עדיין טקסט. לחץ "נסח מחדש (קלוד)" או "ערוך טקסטים".</p>
           )}
         </section>
+
+        {/* Completed actions */}
+        <ReportItems reportId={rid} clientId={cid} />
 
         {/* Organic traffic chart */}
         <section className="mb-6">

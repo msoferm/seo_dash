@@ -1386,6 +1386,48 @@ export async function deleteReport(id: number): Promise<void> {
   if (error) throw error;
 }
 
+// --- Report items (completed actions inside a report) ---
+export interface ReportItem {
+  id: number; report_id: number; client_id: number;
+  title: string; why: string | null; page_url: string | null;
+  source_type: string | null; source_ref: string | null; sort_order: number; created_at: string;
+}
+export async function listReportItems(reportId: number): Promise<ReportItem[]> {
+  const { data, error } = await supabase.from("report_items").select("*").eq("report_id", reportId).order("sort_order", { ascending: true });
+  if (error) throw error;
+  return data || [];
+}
+export async function createReportItem(reportId: number, clientId: number, body: { title: string; why?: string | null; page_url?: string | null }): Promise<ReportItem> {
+  const { data, error } = await supabase.from("report_items")
+    .insert({ report_id: reportId, client_id: clientId, title: body.title, why: body.why || null, page_url: body.page_url || null, source_type: "manual" })
+    .select().single();
+  if (error) throw error;
+  return data;
+}
+export async function updateReportItem(id: number, body: Partial<Pick<ReportItem, "title" | "why" | "page_url">>): Promise<void> {
+  const { error } = await supabase.from("report_items").update(body).eq("id", id);
+  if (error) throw error;
+}
+export async function deleteReportItem(id: number): Promise<void> {
+  const { error } = await supabase.from("report_items").delete().eq("id", id);
+  if (error) throw error;
+}
+/** Pull all completed actions (any tab) into the report with client-facing explanations. */
+export async function syncReportItems(reportId: number): Promise<{ added: number; note?: string }> {
+  return await invokeFn("report-items-sync", { report_id: reportId });
+}
+/** AI redraft of one item's title + explanation (returns a draft; not saved). */
+export async function improveReportItem(itemId: number, instructions?: string): Promise<{ title: string; why: string }> {
+  return await invokeFn("report-item-improve", { item_id: itemId, instructions });
+}
+/** Add all new completed actions to the client's most recent report. */
+export async function addToLatestReport(clientId: number): Promise<{ report_id: number; added: number } | null> {
+  const reps = await listReports(clientId);
+  if (!reps.length) return null;
+  const res = await syncReportItems(reps[0].id);
+  return { report_id: reps[0].id, added: res.added };
+}
+
 /**
  * Ask Claude to draft the narrative for a period. Pass `opts.instructions` (plus the
  * current text) to revise an existing draft instead of writing from scratch.
