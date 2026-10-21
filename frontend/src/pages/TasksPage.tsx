@@ -184,6 +184,8 @@ export default function TasksPage() {
   const [view, setView] = useState<"pillars" | "agenda">("pillars");
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState<{ task: Task; nonce: number } | null>(null);
+  const [doneOpen, setDoneOpen] = useState(false);
+  const [doneForm, setDoneForm] = useState({ title: "", note: "", page: "", date: new Date().toISOString().slice(0, 10) });
   const fileRef = useRef<HTMLInputElement>(null);
   const onAsk = (t: Task) => { setChatSeed({ task: t, nonce: Date.now() }); setChatOpen(true); };
 
@@ -193,6 +195,10 @@ export default function TasksPage() {
   const plan = useMutation({ mutationFn: () => api.generateWorkPlan(cid), onSuccess: invalidate });
   const upload = useMutation({ mutationFn: (titles: string[]) => api.bulkCreateTasks(cid, titles), onSuccess: invalidate });
   const create = useMutation({ mutationFn: (title: string) => api.createTask(cid, title), onSuccess: () => { setNewTitle(""); invalidate(); } });
+  const createDone = useMutation({
+    mutationFn: () => api.createCompletedTask(cid, { title: doneForm.title.trim(), note: doneForm.note.trim() || null, page_url: doneForm.page.trim() || null, done_on: doneForm.date || null }),
+    onSuccess: () => { setDoneForm({ title: "", note: "", page: "", date: new Date().toISOString().slice(0, 10) }); setDoneOpen(false); invalidate(); },
+  });
   const toggle = useMutation({ mutationFn: ({ id, done }: { id: number; done: boolean }) => api.setTaskDone(id, done), onSuccess: invalidate });
   const remove = useMutation({ mutationFn: (id: number) => api.deleteTask(id), onSuccess: invalidate });
   const preview = useMutation({ mutationFn: (t: Task) => api.previewTask(t.id), onSuccess: invalidate });
@@ -290,7 +296,27 @@ export default function TasksPage() {
         <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (newTitle.trim()) create.mutate(newTitle.trim()); }}>
           <input className="input flex-1" placeholder="הוסף משימה ידנית..." value={newTitle} onChange={(e) => setNewTitle(e.target.value)} />
           <button type="submit" className="btn-primary shrink-0" disabled={create.isPending || !newTitle.trim()}><Plus size={18} /> הוסף</button>
+          <button type="button" className="btn-secondary shrink-0" onClick={() => setDoneOpen((o) => !o)}><CheckCheck size={16} /> משימה שבוצעה</button>
         </form>
+        {doneOpen && (
+          <div className="mt-3 border-t border-slate-100 pt-3 flex flex-col gap-2">
+            <p className="text-xs text-slate-500">תיעוד משימה שכבר בוצעה — תיכנס ישירות ל"תיעוד ביצועים" ותוכל להוסיף אותה לדוח ללקוח.</p>
+            <input className="input" placeholder="מה בוצע? (כותרת)" value={doneForm.title} onChange={(e) => setDoneForm({ ...doneForm, title: e.target.value })} />
+            <textarea className="input" rows={2} placeholder="פירוט / למה בוצע ואיך זה תורם (אופציונלי)" value={doneForm.note} onChange={(e) => setDoneForm({ ...doneForm, note: e.target.value })} />
+            <div className="flex flex-wrap gap-2">
+              <input className="input flex-1 min-w-[220px]" placeholder="קישור לעמוד (אופציונלי)" value={doneForm.page} onChange={(e) => setDoneForm({ ...doneForm, page: e.target.value })} />
+              <label className="text-xs text-slate-500 flex items-center gap-1">תאריך ביצוע
+                <input type="date" className="input py-1" value={doneForm.date} onChange={(e) => setDoneForm({ ...doneForm, date: e.target.value })} />
+              </label>
+            </div>
+            <div className="flex gap-2">
+              <button className="btn-primary text-sm py-1.5" onClick={() => createDone.mutate()} disabled={createDone.isPending || !doneForm.title.trim()}>
+                {createDone.isPending ? <Loader2 size={16} className="animate-spin" /> : <CheckCheck size={16} />} הוסף כבוצע
+              </button>
+              <button className="btn-secondary text-sm py-1.5" onClick={() => setDoneOpen(false)}>ביטול</button>
+            </div>
+          </div>
+        )}
       </div>
 
       {pillars.length > 0 && (

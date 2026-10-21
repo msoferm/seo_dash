@@ -1047,6 +1047,19 @@ export async function createTask(
   return data;
 }
 
+/** Log a task that was already completed (flows into the activity log + reports). */
+export async function createCompletedTask(
+  clientId: number,
+  body: { title: string; note?: string | null; page_url?: string | null; done_on?: string | null },
+): Promise<Task> {
+  const done_at = body.done_on ? new Date(body.done_on + "T12:00:00").toISOString() : new Date().toISOString();
+  const { data, error } = await supabase.from("tasks")
+    .insert({ client_id: clientId, title: body.title, note: body.note || null, page_url: body.page_url || null, source: "manual", status: "done", done_at })
+    .select().single();
+  if (error) throw error;
+  return data;
+}
+
 export async function setTaskDone(id: number, done: boolean): Promise<void> {
   const { error } = await supabase
     .from("tasks")
