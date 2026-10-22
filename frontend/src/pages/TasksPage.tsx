@@ -11,6 +11,7 @@ import type { Task, Level, RecStatus } from "../api";
 import PageHeader from "../components/PageHeader";
 import Spinner from "../components/Spinner";
 import TaskAssistant, { AssistantFab } from "./TaskAssistant";
+import type { AssistantSeed } from "./TaskAssistant";
 import { MessageCircle } from "lucide-react";
 
 const PILLAR_META: Record<string, { label: string; icon: typeof Wrench }> = {
@@ -183,11 +184,14 @@ export default function TasksPage() {
   const [newTitle, setNewTitle] = useState("");
   const [view, setView] = useState<"pillars" | "agenda">("pillars");
   const [chatOpen, setChatOpen] = useState(false);
-  const [chatSeed, setChatSeed] = useState<{ task: Task; nonce: number } | null>(null);
+  const [chatSeed, setChatSeed] = useState<AssistantSeed | null>(null);
   const [doneOpen, setDoneOpen] = useState(false);
   const [doneForm, setDoneForm] = useState({ title: "", note: "", page: "", date: new Date().toISOString().slice(0, 10) });
   const fileRef = useRef<HTMLInputElement>(null);
-  const onAsk = (t: Task) => { setChatSeed({ task: t, nonce: Date.now() }); setChatOpen(true); };
+  const onAsk = (t: Task) => {
+    setChatSeed({ title: t.title, nonce: Date.now(), context: `משימה: "${t.title}" | סטטוס: ${t.status} | עמוד: ${t.page_url || "—"} | פרטים: ${t.details || "—"} | תוצאה/הערה: ${t.note || "—"}` });
+    setChatOpen(true);
+  };
 
   const { data: tasks, isLoading } = useQuery({ queryKey: ["tasks", cid], queryFn: () => api.listTasks(cid), enabled: !!cid });
   const invalidate = () => qc.invalidateQueries({ queryKey: ["tasks", cid] });

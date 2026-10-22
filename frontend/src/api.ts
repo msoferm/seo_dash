@@ -1358,6 +1358,22 @@ export async function deleteReportLink(id: number): Promise<void> {
   if (error) throw error;
 }
 
+// --- Custom link-type presets (team-wide) ---
+export interface LinkTypePreset { id: number; name: string }
+export async function listLinkTypePresets(): Promise<LinkTypePreset[]> {
+  const { data, error } = await supabase.from("link_type_presets").select("id, name").order("name");
+  if (error) throw error;
+  return data || [];
+}
+export async function addLinkTypePreset(name: string): Promise<void> {
+  const { error } = await supabase.from("link_type_presets").insert({ name: name.trim() });
+  if (error && !String(error.message).includes("duplicate")) throw error;
+}
+export async function deleteLinkTypePreset(id: number): Promise<void> {
+  const { error } = await supabase.from("link_type_presets").delete().eq("id", id);
+  if (error) throw error;
+}
+
 // --- Saved reports ---
 export async function listReports(clientId: number): Promise<Report[]> {
   const { data, error } = await supabase

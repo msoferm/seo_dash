@@ -32,10 +32,11 @@ Deno.serve(async (req) => {
     const client_id = report.client_id;
     const { data: client } = await sb.from("clients").select("name, domain, notes").eq("id", client_id).maybeSingle();
 
-    const [recR, audR, taskR, existR] = await Promise.all([
+    const [recR, audR, taskR, linkR, existR] = await Promise.all([
       sb.from("recommendations").select("id, type, title, page").eq("client_id", client_id).in("status", ["applied", "done"]),
       sb.from("audit_issues").select("id, issue, page").eq("client_id", client_id).eq("status", "applied"),
       sb.from("tasks").select("id, title, category, page_url, source_type, note").eq("client_id", client_id).eq("status", "done"),
+      sb.from("report_links").select("id, link_type, url, notes").eq("client_id", client_id),
       sb.from("report_items").select("source_type, source_ref").eq("report_id", report_id),
     ]);
 
@@ -54,6 +55,10 @@ Deno.serve(async (req) => {
       if (t.source_type === "recommendation" || t.source_type === "audit") continue;
       const k = `task:${t.id}`; if (have.has(k)) continue;
       cands.push({ source_type: "task", source_ref: String(t.id), title: t.title || "", area: PILLAR_AREA[t.category || ""] || "משימה", page: t.page_url, hint: t.note || "" });
+    }
+    for (const l of linkR.data || []) {
+      const k = `link:${l.id}`; if (have.has(k)) continue;
+      cands.push({ source_type: "link", source_ref: String(l.id), title: `בניית קישור: ${l.link_type}`, area: "קישורים נכנסים", page: l.url, hint: l.notes || "" });
     }
     const batch = cands.slice(0, 40);
     if (batch.length === 0) return jsonResponse({ added: 0, note: "אין פעולות חדשות להוספה." });

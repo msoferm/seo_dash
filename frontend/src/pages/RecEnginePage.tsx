@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Sparkles, Loader2, ExternalLink, Wrench, Pencil, X, Check, FileText, TrendingUp, EyeOff } from "lucide-react";
+import { Sparkles, Loader2, ExternalLink, Wrench, Pencil, Check, CheckCheck, FileText, TrendingUp, EyeOff, MessageCircle } from "lucide-react";
 import * as api from "../api";
 import type { Recommendation, RecType } from "../api";
 import PageHeader from "../components/PageHeader";
 import Spinner from "../components/Spinner";
+import TaskAssistant, { AssistantFab } from "./TaskAssistant";
+import type { AssistantSeed } from "./TaskAssistant";
 
 const TYPE_LABEL: Record<RecType, string> = {
   title_meta: "כותרת/תיאור", improve_page: "שיפור עמוד", add_keywords: "מילות מפתח", new_content: "תוכן חדש",
@@ -28,11 +30,13 @@ const FILTERS: { key: "all" | "pending" | "applied" | "done" | "ignored"; label:
   { key: "ignored", label: "התעלמתי", active: "bg-rose-500 text-white" },
 ];
 
-function RecCard({ r, onExample, onApply, onIgnore, busy }: {
+function RecCard({ r, onExample, onApply, onIgnore, onDone, onAsk, busy }: {
   r: Recommendation;
   onExample: (id: number) => void;
   onApply: (id: number, mod?: string) => void;
   onIgnore: (id: number) => void;
+  onDone: (id: number) => void;
+  onAsk: (r: Recommendation) => void;
   busy: { example: boolean; apply: boolean };
 }) {
   const [modifying, setModifying] = useState(false);
@@ -77,6 +81,8 @@ function RecCard({ r, onExample, onApply, onIgnore, busy }: {
             <button className="btn-secondary text-sm py-1.5" onClick={() => onExample(r.id)} disabled={busy.example}>{busy.example ? <Loader2 size={15} className="animate-spin" /> : <FileText size={15} />} צור דוגמה</button>
             <button className="btn-primary text-sm py-1.5" onClick={() => onApply(r.id)} disabled={busy.apply}>{busy.apply ? <Loader2 size={15} className="animate-spin" /> : <Wrench size={15} />} בצע</button>
             <button className="btn-secondary text-sm py-1.5" onClick={() => setModifying(true)}><Pencil size={15} /> עם שינוי</button>
+            <button className="btn-secondary text-sm py-1.5" onClick={() => onDone(r.id)} title="סמן כבוצע ידנית (בלי הרצה)"><CheckCheck size={15} /> בוצע</button>
+            <button className="btn-secondary text-sm py-1.5" onClick={() => onAsk(r)} title="שאל את קלוד על ההמלצה"><MessageCircle size={15} /> שאל</button>
             <button className="text-sm py-1.5 px-3 rounded-lg text-slate-500 hover:bg-slate-100" onClick={() => onIgnore(r.id)}><EyeOff size={15} /> התעלם</button>
           </div>
         )
@@ -101,6 +107,14 @@ export default function RecEnginePage() {
   const example = useMutation({ mutationFn: (id: number) => api.generateRecExample(id), onSuccess: invalidate });
   const apply = useMutation({ mutationFn: (v: { id: number; mod?: string }) => api.applyRecommendation(v.id, v.mod), onSuccess: invalidate });
   const ignore = useMutation({ mutationFn: (id: number) => api.setRecommendationStatus(id, "ignored"), onSuccess: invalidate });
+  const done = useMutation({ mutationFn: (id: number) => api.setRecommendationStatus(id, "done"), onSuccess: invalidate });
+
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatSeed, setChatSeed] = useState<AssistantSeed | null>(null);
+  const onAsk = (r: Recommendation) => {
+    setChatSeed({ title: r.title, nonce: Date.now(), context: `המלצה: "${r.title}" | סוג: ${TYPE_LABEL[r.type]} | עמוד: ${r.page || "—"} | הזדמנות: ${r.opportunity || "—"} | פעולה: ${r.action || "—"}` });
+    setChatOpen(true);
+  };
 
   const all = recs || [];
   const counts: Record<string, number> = { all: all.length };
@@ -109,6 +123,7 @@ export default function RecEnginePage() {
   const visible = typeFilter === "all" ? byStatus : byStatus.filter((r) => r.type === typeFilter);
   const totalEst = all.filter((r) => r.status === "pending").reduce((s, r) => s + (r.est_visits || 0), 0);
   const types = [...new Set(all.map((r) => r.type))];
+  const typeCount = (tp: RecType) => byStatus.filter((r) => r.type === tp).length;
 
   return (
     <div>
@@ -154,9 +169,11 @@ export default function RecEnginePage() {
             {types.length > 1 && (
               <>
                 <div className="text-xs text-slate-400 uppercase px-3 mt-4 mb-1">סוג</div>
-                <button onClick={() => setTypeFilter("all")} className={`text-right px-3 py-1.5 rounded-lg text-sm ${typeFilter === "all" ? "bg-slate-200 text-slate-800" : "text-slate-600 hover:bg-slate-100"}`}>הכל</button>
+                <button onClick={() => setTypeFilter("all")} className={`flex items-center justify-between px-3 py-1.5 rounded-lg text-sm ${typeFilter === "all" ? "bg-slate-200 text-slate-800" : "text-slate-600 hover:bg-slate-100"}`}><span>הכל</span><span className="text-xs rounded-full px-1.5 py-0.5 bg-slate-100 text-slate-500">{byStatus.length}</span></button>
                 {types.map((tp) => (
-                  <button key={tp} onClick={() => setTypeFilter(tp)} className={`text-right px-3 py-1.5 rounded-lg text-sm ${typeFilter === tp ? "bg-slate-200 text-slate-800" : "text-slate-600 hover:bg-slate-100"}`}>{TYPE_LABEL[tp]}</button>
+                  <button key={tp} onClick={() => setTypeFilter(tp)} className={`flex items-center justify-between px-3 py-1.5 rounded-lg text-sm ${typeFilter === tp ? "bg-slate-200 text-slate-800" : "text-slate-600 hover:bg-slate-100"}`}>
+                    <span>{TYPE_LABEL[tp]}</span><span className="text-xs rounded-full px-1.5 py-0.5 bg-slate-100 text-slate-500">{typeCount(tp)}</span>
+                  </button>
                 ))}
               </>
             )}
@@ -172,6 +189,8 @@ export default function RecEnginePage() {
                   onExample={(id) => example.mutate(id)}
                   onApply={(id, mod) => apply.mutate({ id, mod })}
                   onIgnore={(id) => ignore.mutate(id)}
+                  onDone={(id) => done.mutate(id)}
+                  onAsk={onAsk}
                   busy={{ example: example.isPending && example.variables === r.id, apply: apply.isPending && apply.variables?.id === r.id }}
                 />
               ))
@@ -179,6 +198,9 @@ export default function RecEnginePage() {
           </div>
         </div>
       )}
+
+      <AssistantFab onClick={() => { setChatSeed(null); setChatOpen(true); }} />
+      <TaskAssistant cid={cid} open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} />
     </div>
   );
 }

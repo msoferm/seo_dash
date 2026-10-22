@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link2, Plus, Trash2, ClipboardPaste, ExternalLink } from "lucide-react";
+import { Link2, Plus, Trash2, ClipboardPaste, ExternalLink, Tag, X } from "lucide-react";
 import * as api from "../api";
 import type { ReportLink } from "../api";
 import Spinner from "./Spinner";
@@ -42,6 +42,13 @@ export default function ReportLinksManager({ clientId }: { clientId: number }) {
     queryFn: () => api.listReportLinks(clientId),
     enabled: !!clientId,
   });
+  const { data: presets } = useQuery({ queryKey: ["link-presets"], queryFn: () => api.listLinkTypePresets() });
+  const typeOptions = [...new Set([...(presets || []).map((p) => p.name), ...COMMON_TYPES])];
+
+  const [showTypes, setShowTypes] = useState(false);
+  const [newType, setNewType] = useState("");
+  const addType = useMutation({ mutationFn: () => api.addLinkTypePreset(newType.trim()), onSuccess: () => { setNewType(""); qc.invalidateQueries({ queryKey: ["link-presets"] }); } });
+  const delType = useMutation({ mutationFn: (id: number) => api.deleteLinkTypePreset(id), onSuccess: () => qc.invalidateQueries({ queryKey: ["link-presets"] }) });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["report-links", clientId] });
 
@@ -93,10 +100,35 @@ export default function ReportLinksManager({ clientId }: { clientId: number }) {
           <Link2 size={18} /> בנק קישורים ידניים
           <span className="text-slate-400 text-sm font-normal">({(links || []).length})</span>
         </h3>
-        <button className="btn-secondary text-sm py-1.5" onClick={() => setShowBulk((s) => !s)}>
-          <ClipboardPaste size={16} /> הדבקה מרובה
-        </button>
+        <div className="flex gap-1.5">
+          <button className="btn-secondary text-sm py-1.5" onClick={() => setShowTypes((s) => !s)}>
+            <Tag size={16} /> נהל סוגי קישור
+          </button>
+          <button className="btn-secondary text-sm py-1.5" onClick={() => setShowBulk((s) => !s)}>
+            <ClipboardPaste size={16} /> הדבקה מרובה
+          </button>
+        </div>
       </div>
+
+      {showTypes && (
+        <div className="mb-4 bg-slate-50 rounded-lg p-3">
+          <p className="text-xs text-slate-500 mb-2">הוסף שמות קבועים לסוגי קישור — יופיעו לבחירה בשדה "סוג קישור".</p>
+          <div className="flex gap-2 mb-2">
+            <input className="input flex-1" placeholder="שם סוג חדש (למשל: מצגת, תגובה בפורום)" value={newType}
+              onChange={(e) => setNewType(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && newType.trim()) addType.mutate(); }} />
+            <button className="btn-primary shrink-0" onClick={() => addType.mutate()} disabled={addType.isPending || !newType.trim()}><Plus size={16} /> הוסף</button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {(presets || []).map((p) => (
+              <span key={p.id} className="badge bg-white border border-slate-200 text-slate-600 gap-1">
+                {p.name}
+                <button className="text-slate-400 hover:text-rose-600" onClick={() => delType.mutate(p.id)}><X size={11} /></button>
+              </span>
+            ))}
+            {(presets || []).length === 0 && <span className="text-xs text-slate-400">אין עדיין סוגים מותאמים (הרשימה הקבועה עדיין זמינה לבחירה).</span>}
+          </div>
+        </div>
+      )}
 
       {/* Add one */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-2 mb-3">
@@ -108,7 +140,7 @@ export default function ReportLinksManager({ clientId }: { clientId: number }) {
           onChange={(e) => setLinkType(e.target.value)}
         />
         <datalist id="link-types">
-          {COMMON_TYPES.map((t) => (
+          {typeOptions.map((t) => (
             <option key={t} value={t} />
           ))}
         </datalist>

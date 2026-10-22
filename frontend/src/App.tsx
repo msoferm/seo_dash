@@ -32,7 +32,7 @@ function Sidebar() {
   const active = "bg-brand-50 text-brand-700";
   const inactive = "text-slate-600 hover:bg-slate-100";
   return (
-    <aside className="w-64 bg-white border-l border-slate-200 p-4 flex flex-col gap-1 shrink-0">
+    <aside className="w-64 bg-white border-l border-slate-200 p-4 flex flex-col gap-1 shrink-0 sticky top-0 h-screen overflow-y-auto">
       <Link to="/" className="text-xl font-bold text-brand-700 mb-4 px-3">דאשבורד SEO</Link>
       <NavLink to="/" end className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
         <Home size={18} /> כל הלקוחות
@@ -107,9 +107,9 @@ function Sidebar() {
 
 function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="h-full flex">
+    <div className="min-h-screen flex items-start">
       <Sidebar />
-      <main className="flex-1 overflow-y-auto p-6">{children}</main>
+      <main className="flex-1 min-w-0 p-6">{children}</main>
     </div>
   );
 }

@@ -2,31 +2,30 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { MessageCircle, Send, Loader2, X, Bot } from "lucide-react";
 import * as api from "../api";
-import type { Task } from "../api";
 
 type Msg = { role: "user" | "assistant"; text: string };
+export type AssistantSeed = { title: string; context: string; nonce: number };
 
-/** Slide-over AI assistant for the tasks page: ask anything about a task (before/after it's
- *  done), consult, or give general instructions. Reuses the client chat (with SEO data tools). */
+/** Slide-over AI assistant: ask anything about a task/recommendation (before/after it's done),
+ *  consult, or give general instructions. Reuses the client chat (with SEO data tools). */
 export default function TaskAssistant({ cid, open, onClose, seed }: {
-  cid: number; open: boolean; onClose: () => void; seed: { task: Task; nonce: number } | null;
+  cid: number; open: boolean; onClose: () => void; seed: AssistantSeed | null;
 }) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState<number | null>(null);
-  const [ctx, setCtx] = useState<Task | null>(null);
+  const [ctxTitle, setCtxTitle] = useState<string | null>(null);
+  const [ctxStr, setCtxStr] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (seed) { setCtx(seed.task); setInput(`לגבי המשימה "${seed.task.title}": `); }
+    if (seed) { setCtxTitle(seed.title); setCtxStr(seed.context); setInput(`לגבי "${seed.title}": `); }
   }, [seed?.nonce]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, open]);
 
   const send = useMutation({
     mutationFn: async (text: string) => {
-      const prefix = ctx
-        ? `[הקשר משימה — "${ctx.title}" | סטטוס: ${ctx.status} | חודש: ${ctx.target_month ?? "—"} | עמוד: ${ctx.page_url || "—"} | פרטים: ${ctx.details || "—"} | תוצאה/הערה: ${ctx.note || "—"}]\n\n`
-        : "";
+      const prefix = ctxStr ? `[הקשר — ${ctxStr}]\n\n` : "";
       return api.sendChat(cid, prefix + text, sessionId);
     },
     onSuccess: (r) => { setSessionId(r.session_id); setMsgs((m) => [...m, { role: "assistant", text: r.reply }]); },
@@ -50,10 +49,10 @@ export default function TaskAssistant({ cid, open, onClose, seed }: {
           <button className="text-slate-400 hover:text-slate-700 p-1" onClick={onClose}><X size={20} /></button>
         </div>
 
-        {ctx && (
+        {ctxTitle && (
           <div className="px-4 py-2 bg-indigo-50/60 border-b border-indigo-100 text-xs text-indigo-800 flex items-center justify-between gap-2">
-            <span className="truncate">בהקשר: {ctx.title}</span>
-            <button className="text-indigo-500 hover:text-indigo-700 shrink-0" onClick={() => setCtx(null)}>נקה הקשר</button>
+            <span className="truncate">בהקשר: {ctxTitle}</span>
+            <button className="text-indigo-500 hover:text-indigo-700 shrink-0" onClick={() => { setCtxTitle(null); setCtxStr(""); }}>נקה הקשר</button>
           </div>
         )}
 
