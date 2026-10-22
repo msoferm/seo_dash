@@ -5,6 +5,7 @@ import { Activity, ExternalLink, TrendingUp, TrendingDown, Minus, RefreshCw, Loa
 import * as api from "../api";
 import type { ImpactRow } from "../api";
 import PageHeader from "../components/PageHeader";
+import DataSourceBanner from "../components/DataSourceBanner";
 import Spinner from "../components/Spinner";
 
 function Delta({ before, now }: { before: number; now: number }) {
@@ -49,6 +50,7 @@ export default function ImpactPage() {
           </button>
         }
       />
+      <DataSourceBanner cid={cid} match={["Search Console", "Analytics"]} />
       {refresh.isError && <div className="mb-3 text-sm text-rose-600">שגיאת סנכרון: {(refresh.error as any)?.message}</div>}
 
       <div className="card">

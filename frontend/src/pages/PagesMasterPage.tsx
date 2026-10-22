@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LayoutList, ExternalLink, Loader2, Radar } from "lucide-react";
 import * as api from "../api";
 import PageHeader from "../components/PageHeader";
+import DataSourceBanner from "../components/DataSourceBanner";
 import Spinner from "../components/Spinner";
 import DateRangePicker, { rangeForDays } from "../components/DateRangePicker";
 
@@ -82,6 +83,7 @@ export default function PagesMasterPage() {
           </>
         }
       />
+      <DataSourceBanner cid={cid} />
       {crawl.isError && <div className="mb-3 text-sm text-rose-600">{(crawl.error as any)?.message}</div>}
       {polling && <div className="mb-3 text-sm text-brand-700 flex items-center gap-2"><Loader2 size={15} className="animate-spin" /> הסריקה רצה ברקע — העמודים והנתונים המבניים יתעדכנו כאן בהדרגה.</div>}
       {lastCrawl && !polling && <div className="mb-3 text-xs text-slate-400">נסרק לאחרונה: {new Date(lastCrawl).toLocaleString("he-IL")} · {(crawled || []).length} עמודים</div>}

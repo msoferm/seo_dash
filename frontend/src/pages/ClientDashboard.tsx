@@ -5,6 +5,7 @@ import { Search, FileText, MousePointerClick, Eye, TrendingUp, TrendingDown, Min
 import * as api from "../api";
 import KpiCard from "../components/KpiCard";
 import PageHeader from "../components/PageHeader";
+import DataSourceBanner from "../components/DataSourceBanner";
 import Spinner from "../components/Spinner";
 import EditClientModal from "../components/EditClientModal";
 import GscPropertyPicker from "../components/GscPropertyPicker";
@@ -177,6 +178,7 @@ export default function ClientDashboard() {
           </>
         }
       />
+      <DataSourceBanner cid={cid} match={["Search Console", "Analytics"]} />
 
       {/* Connection bar */}
       <div className="card mb-6">

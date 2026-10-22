@@ -5,6 +5,7 @@ import { Stethoscope, FileText, Loader2, Copy, Check, Wrench, X, Pencil, RotateC
 import * as api from "../api";
 import type { AuditIssueRow, AuditSeverity, EeatResult } from "../api";
 import PageHeader from "../components/PageHeader";
+import DataSourceBanner from "../components/DataSourceBanner";
 import TaskAssistant, { AssistantFab } from "./TaskAssistant";
 import type { AssistantSeed } from "./TaskAssistant";
 
@@ -66,6 +67,7 @@ export default function SeoToolsPage() {
   return (
     <div>
       <PageHeader title="כלי SEO" subtitle={client ? `${client.name} · אודיט טכני ובריפים לתוכן` : "כלי SEO"} />
+      <DataSourceBanner cid={cid} />
 
       {/* Technical audit */}
       <div className="card mb-6">

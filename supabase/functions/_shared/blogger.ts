@@ -116,6 +116,8 @@ async function writeAndPublish(sb: any, clientId: number, keyword: string, opts:
     "TITLE: <כותרת SEO, עד 60 תווים, כוללת את מילת המפתח>\n" +
     "EXCERPT: <תיאור מטא לקידום אורגני, 120-155 תווים, כולל את מילת המפתח>\n" +
     "IMAGE: <2-4 מילות חיפוש באנגלית לתמונה>\n" +
+    "IMAGE_PROMPT: <תיאור באנגלית ליצירת תמונת AI איכותית ורלוונטית למאמר, סגנון מקצועי/נקי, בלי טקסט בתמונה>\n" +
+    "IMAGE_ALT: <טקסט alt בעברית המתאר את התמונה וכולל את מילת המפתח>\n" +
     "BODY:\n<גוף המאמר ב-HTML בלבד — h2/h3/p/ul>";
   const userMsg =
     `עסק: ${client.name} (${client.domain}). הערות: ${client.notes || "—"}.\n` +
@@ -128,6 +130,8 @@ async function writeAndPublish(sb: any, clientId: number, keyword: string, opts:
   const title = (text.match(/TITLE:\s*(.+)/)?.[1] || "").trim();
   const excerpt = (text.match(/EXCERPT:\s*(.+)/)?.[1] || "").trim();
   const imageQuery = (text.match(/IMAGE:\s*(.+)/)?.[1] || "").trim();
+  const imagePrompt = (text.match(/IMAGE_PROMPT:\s*(.+)/)?.[1] || "").trim();
+  const imageAlt = (text.match(/IMAGE_ALT:\s*(.+)/)?.[1] || "").trim();
   let html = (text.match(/BODY:\s*([\s\S]+)$/)?.[1] || "").trim();
   html = html.replace(/^```(?:html)?\s*/i, "").replace(/```\s*$/i, "").trim();
   if (!title || html.length < 40) throw new Error(`המאמר שנוצר לא תקין. פלט גולמי: ${text.slice(0, 300)}`);
@@ -137,8 +141,10 @@ async function writeAndPublish(sb: any, clientId: number, keyword: string, opts:
   const auth = basicAuth(cw.username, cw.app_password);
   let featuredMedia: number | null = null;
   try {
-    const img = await fetchPexels(imageQuery || keyword);
-    if (img) featuredMedia = await uploadMedia(site, auth, img);
+    // AI-generated image first (no API key needed), Pexels as fallback.
+    let img = await fetchAiImage(imagePrompt || `${keyword}, professional clean illustration`);
+    if (!img) img = await fetchPexels(imageQuery || keyword);
+    if (img) featuredMedia = await uploadMedia(site, auth, img, imageAlt || title);
   } catch { /* image best-effort */ }
 
   const postBody: any = { title, content: html, excerpt, status: cw.mode };
@@ -182,6 +188,20 @@ export async function approveProposal(sb: any, proposalId: number): Promise<Publ
   return await writeAndPublish(sb, p.client_id, p.keyword, { proposalId });
 }
 
+/** Generate a featured image with AI (Pollinations — free, no API key). */
+async function fetchAiImage(prompt: string): Promise<{ bytes: Uint8Array; filename: string; contentType: string } | null> {
+  if (!prompt) return null;
+  try {
+    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt.slice(0, 300))}?width=1200&height=630&nologo=true`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    if (bytes.length < 2000) return null; // guard against tiny error responses
+    const ct = r.headers.get("content-type") || "image/jpeg";
+    return { bytes, filename: "ai-featured." + (ct.includes("png") ? "png" : "jpg"), contentType: ct.includes("png") ? "image/png" : "image/jpeg" };
+  } catch { return null; }
+}
+
 async function fetchPexels(query: string): Promise<{ bytes: Uint8Array; filename: string; contentType: string } | null> {
   const key = Deno.env.get("PEXELS_API_KEY");
   if (!key || !query) return null;
@@ -195,10 +215,15 @@ async function fetchPexels(query: string): Promise<{ bytes: Uint8Array; filename
   return { bytes: new Uint8Array(await ir.arrayBuffer()), filename: (query.replace(/[^a-z0-9]+/gi, "-").slice(0, 40) || "featured") + ".jpg", contentType: "image/jpeg" };
 }
 
-async function uploadMedia(site: string, auth: string, img: { bytes: Uint8Array; filename: string; contentType: string }): Promise<number | null> {
+async function uploadMedia(site: string, auth: string, img: { bytes: Uint8Array; filename: string; contentType: string }, alt?: string): Promise<number | null> {
   const r = await fetch(`${site}/wp-json/wp/v2/media`, { method: "POST", headers: { Authorization: auth, "Content-Type": img.contentType, "Content-Disposition": `attachment; filename="${img.filename}"` }, body: img.bytes });
   if (!r.ok) return null;
   const m = await r.json();
+  if (m.id && alt) {
+    try {
+      await fetch(`${site}/wp-json/wp/v2/media/${m.id}`, { method: "POST", headers: { Authorization: auth, "Content-Type": "application/json" }, body: JSON.stringify({ alt_text: alt, title: alt }) });
+    } catch { /* alt best-effort */ }
+  }
   return m.id || null;
 }
 

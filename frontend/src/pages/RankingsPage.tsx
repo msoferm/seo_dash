@@ -5,6 +5,7 @@ import { RefreshCw, Search, ExternalLink, ChevronUp, ChevronDown, ChevronsUpDown
 import * as api from "../api";
 import type { ZefoKeyword } from "../api";
 import PageHeader from "../components/PageHeader";
+import DataSourceBanner from "../components/DataSourceBanner";
 import Spinner from "../components/Spinner";
 import RankBucketsChart from "../components/RankBucketsChart";
 
@@ -150,6 +151,7 @@ export default function RankingsPage() {
           )
         }
       />
+      <DataSourceBanner cid={cid} match={["ZEFO"]} />
 
       {!linked && (
         <div className="card mb-4 bg-amber-50 border-amber-200 text-amber-800 text-sm">

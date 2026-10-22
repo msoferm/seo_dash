@@ -6,6 +6,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import * as api from "../api";
 import { Keyword } from "../api";
 import PageHeader from "../components/PageHeader";
+import DataSourceBanner from "../components/DataSourceBanner";
 import Spinner from "../components/Spinner";
 
 const MONTH_NAMES = ["", "ינו", "פבר", "מרץ", "אפר", "מאי", "יוני", "יולי", "אוג", "ספט", "אוק", "נוב", "דצמ"];
@@ -97,6 +98,7 @@ export default function KeywordsPage() {
           </>
         }
       />
+      <DataSourceBanner cid={cid} match={["Keyword Planner"]} />
 
       {upload.isSuccess && (
         <div className="card mb-4 bg-emerald-50 border-emerald-200 text-emerald-800 text-sm">

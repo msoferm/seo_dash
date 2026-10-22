@@ -8,6 +8,7 @@ import PageHeader from "../components/PageHeader";
 import Spinner from "../components/Spinner";
 import TaskAssistant, { AssistantFab } from "./TaskAssistant";
 import type { AssistantSeed } from "./TaskAssistant";
+import DataSourceBanner from "../components/DataSourceBanner";
 
 const TYPE_LABEL: Record<RecType, string> = {
   title_meta: "כותרת/תיאור", improve_page: "שיפור עמוד", add_keywords: "מילות מפתח", new_content: "תוכן חדש",
@@ -177,6 +178,7 @@ export default function RecEnginePage() {
         }
       />
 
+      <DataSourceBanner cid={cid} />
       {gen.isError && <div className="mb-4 text-sm text-rose-600">{(gen.error as any)?.message}</div>}
       {apply.isError && <div className="mb-4 text-sm text-rose-600">שגיאה בביצוע: {(apply.error as any)?.message}</div>}
 
