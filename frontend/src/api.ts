@@ -1,4 +1,5 @@
 import { supabase, invokeFn, invokeFnFormData } from "./supabase";
+import type { NavEntry } from "./navItems";
 
 export interface Client {
   id: number;
@@ -1412,6 +1413,17 @@ export async function updateReport(id: number, body: Partial<Report>): Promise<R
 
 export async function deleteReport(id: number): Promise<void> {
   const { error } = await supabase.from("reports").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// --- Customizable sidebar menu layout (team-wide) ---
+export async function getNavConfig(): Promise<NavEntry[] | null> {
+  const { data, error } = await supabase.from("app_settings").select("value").eq("key", "client_nav").maybeSingle();
+  if (error) throw error;
+  return (data?.value as NavEntry[]) || null;
+}
+export async function saveNavConfig(value: NavEntry[]): Promise<void> {
+  const { error } = await supabase.from("app_settings").upsert({ key: "client_nav", value, updated_at: new Date().toISOString() }, { onConflict: "key" });
   if (error) throw error;
 }
 

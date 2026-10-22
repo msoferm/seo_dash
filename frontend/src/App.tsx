@@ -1,6 +1,11 @@
+import { useState } from "react";
 import { Routes, Route, NavLink, useParams, Link } from "react-router-dom";
-import { Users, BarChart3, Search, MessageSquare, HelpCircle, Home, LogOut, Target, ClipboardList, Lightbulb, FileText, Wand2, Radar, Stethoscope, Newspaper, Sparkles, LayoutList, Activity, Upload, ClipboardCheck } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Users, Home, LogOut, Lightbulb, Settings2 } from "lucide-react";
 import { useAuth } from "./AuthContext";
+import * as api from "./api";
+import { resolveNav, CLIENT_NAV_BY_KEY } from "./navItems";
+import NavEditor from "./NavEditor";
 import ClientsPage from "./pages/ClientsPage";
 import ClientDashboard from "./pages/ClientDashboard";
 import KeywordsPage from "./pages/KeywordsPage";
@@ -31,6 +36,9 @@ function Sidebar() {
   const navItem = "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors";
   const active = "bg-brand-50 text-brand-700";
   const inactive = "text-slate-600 hover:bg-slate-100";
+  const { data: navCfg } = useQuery({ queryKey: ["nav-config"], queryFn: () => api.getNavConfig() });
+  const entries = resolveNav(navCfg);
+  const [editOpen, setEditOpen] = useState(false);
   return (
     <aside className="w-64 bg-white border-l border-slate-200 p-4 flex flex-col gap-1 shrink-0 sticky top-0 h-screen overflow-y-auto">
       <Link to="/" className="text-xl font-bold text-brand-700 mb-4 px-3">דאשבורד SEO</Link>
@@ -42,57 +50,24 @@ function Sidebar() {
       </NavLink>
       {cid && (
         <>
-          <div className="text-xs text-slate-400 uppercase mt-4 px-3">הלקוח הנוכחי</div>
-          <NavLink to={`/clients/${cid}`} end className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
-            <BarChart3 size={18} /> סקירה
-          </NavLink>
-          <NavLink to={`/clients/${cid}/keywords`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
-            <Search size={18} /> מילות מפתח
-          </NavLink>
-          <NavLink to={`/clients/${cid}/rankings`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
-            <Target size={18} /> מעקב מיקומים
-          </NavLink>
-          <NavLink to={`/clients/${cid}/faq`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
-            <HelpCircle size={18} /> FAQ Generator
-          </NavLink>
-          <NavLink to={`/clients/${cid}/chat`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
-            <MessageSquare size={18} /> צ׳אט עם קלוד
-          </NavLink>
-          <NavLink to={`/clients/${cid}/tasks`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
-            <ClipboardList size={18} /> לוח משימות
-          </NavLink>
-          <NavLink to={`/clients/${cid}/reports`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
-            <FileText size={18} /> דוחות קידום
-          </NavLink>
-          <NavLink to={`/clients/${cid}/engine`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
-            <Sparkles size={18} /> מנוע המלצות
-          </NavLink>
-          <NavLink to={`/clients/${cid}/pages`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
-            <LayoutList size={18} /> עמודים
-          </NavLink>
-          <NavLink to={`/clients/${cid}/impact`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
-            <Activity size={18} /> מעקב השפעה
-          </NavLink>
-          <NavLink to={`/clients/${cid}/activity`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
-            <ClipboardCheck size={18} /> תיעוד ביצועים
-          </NavLink>
-          <NavLink to={`/clients/${cid}/upload`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
-            <Upload size={18} /> העלאת נתונים
-          </NavLink>
-          <NavLink to={`/clients/${cid}/recommendations`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
-            <Wand2 size={18} /> המלצות קלוד
-          </NavLink>
-          <NavLink to={`/clients/${cid}/prospects`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
-            <Radar size={18} /> איתור קישורים
-          </NavLink>
-          <NavLink to={`/clients/${cid}/seo-tools`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
-            <Stethoscope size={18} /> כלי SEO
-          </NavLink>
-          <NavLink to={`/clients/${cid}/blog`} className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
-            <Newspaper size={18} /> בלוג אוטומטי
-          </NavLink>
+          <div className="flex items-center justify-between mt-4 px-3">
+            <span className="text-xs text-slate-400 uppercase">הלקוח הנוכחי</span>
+            <button className="text-slate-400 hover:text-brand-600" title="ערוך תפריט" onClick={() => setEditOpen(true)}><Settings2 size={14} /></button>
+          </div>
+          {entries.map((e, i) => {
+            if (e.t === "h") return <div key={`h${i}`} className="text-xs text-slate-400 uppercase mt-3 px-3">{e.label}</div>;
+            const def = CLIENT_NAV_BY_KEY[e.key]; if (!def) return null;
+            const Icon = def.icon;
+            return (
+              <NavLink key={e.key} to={`/clients/${cid}${def.suffix}`} end={def.suffix === ""}
+                className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
+                <Icon size={18} /> {e.label ?? def.label}
+              </NavLink>
+            );
+          })}
         </>
       )}
+      {editOpen && <NavEditor config={navCfg ?? null} onClose={() => setEditOpen(false)} />}
       <div className="mt-auto pt-4 border-t border-slate-100 text-xs text-slate-500">
         <div className="px-3 truncate flex items-center gap-1 mb-2">
           <Users size={14} /> {user?.email}

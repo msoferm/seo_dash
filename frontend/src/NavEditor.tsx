@@ -1,0 +1,78 @@
+import { useEffect, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { X, Save, Loader2, ChevronUp, ChevronDown, Plus, Trash2, Heading, RotateCcw } from "lucide-react";
+import * as api from "./api";
+import { CLIENT_NAV_BY_KEY, resolveNav } from "./navItems";
+import type { NavEntry } from "./navItems";
+
+export default function NavEditor({ config, onClose }: { config: NavEntry[] | null; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [list, setList] = useState<NavEntry[]>([]);
+  useEffect(() => { setList(resolveNav(config)); }, [config]);
+
+  const save = useMutation({
+    mutationFn: () => api.saveNavConfig(list),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["nav-config"] }); onClose(); },
+  });
+  const reset = useMutation({
+    mutationFn: () => api.saveNavConfig([]),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["nav-config"] }); onClose(); },
+  });
+
+  const move = (i: number, d: -1 | 1) => {
+    const j = i + d; if (j < 0 || j >= list.length) return;
+    const next = [...list]; [next[i], next[j]] = [next[j], next[i]]; setList(next);
+  };
+  const setLabel = (i: number, label: string) => { const next = [...list]; next[i] = { ...next[i], label } as NavEntry; setList(next); };
+  const removeAt = (i: number) => setList(list.filter((_, idx) => idx !== i));
+  const addHeading = () => setList([{ t: "h", id: `h${Date.now()}`, label: "כותרת חדשה" }, ...list]);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
+          <h3 className="font-bold text-slate-900">עריכת תפריט</h3>
+          <button className="text-slate-400 hover:text-slate-700 p-1" onClick={onClose}><X size={20} /></button>
+        </div>
+        <div className="px-5 py-2 text-xs text-slate-500">שנה שמות, גרור למעלה/למטה לסידור, והוסף כותרות כדי לקבץ לשוניות קשורות.</div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-2 space-y-1">
+          {list.map((e, i) => (
+            <div key={i} className={`flex items-center gap-2 rounded-lg p-1.5 ${e.t === "h" ? "bg-slate-100" : "bg-white border border-slate-100"}`}>
+              <div className="flex flex-col">
+                <button className="text-slate-400 hover:text-slate-700 disabled:opacity-30" disabled={i === 0} onClick={() => move(i, -1)}><ChevronUp size={14} /></button>
+                <button className="text-slate-400 hover:text-slate-700 disabled:opacity-30" disabled={i === list.length - 1} onClick={() => move(i, 1)}><ChevronDown size={14} /></button>
+              </div>
+              {e.t === "h" ? (
+                <>
+                  <Heading size={14} className="text-slate-400 shrink-0" />
+                  <input className="input py-1 text-sm flex-1 font-semibold" value={e.label} onChange={(ev) => setLabel(i, ev.target.value)} placeholder="כותרת קבוצה" />
+                  <button className="text-slate-400 hover:text-rose-600 p-1 shrink-0" title="מחק כותרת" onClick={() => removeAt(i)}><Trash2 size={15} /></button>
+                </>
+              ) : (() => {
+                const def = CLIENT_NAV_BY_KEY[(e as any).key]; if (!def) return null;
+                const Icon = def.icon;
+                return (
+                  <>
+                    <Icon size={15} className="text-slate-400 shrink-0" />
+                    <input className="input py-1 text-sm flex-1" value={(e as any).label ?? def.label} onChange={(ev) => setLabel(i, ev.target.value)} placeholder={def.label} />
+                  </>
+                );
+              })()}
+            </div>
+          ))}
+        </div>
+
+        <div className="px-5 py-3 border-t border-slate-200 flex items-center gap-2">
+          <button className="btn-secondary text-sm py-1.5" onClick={addHeading}><Plus size={15} /> הוסף כותרת</button>
+          <button className="text-sm py-1.5 px-3 rounded-lg text-slate-500 hover:bg-slate-100 inline-flex items-center gap-1" onClick={() => { if (confirm("לאפס את התפריט לברירת המחדל?")) reset.mutate(); }}><RotateCcw size={14} /> אפס</button>
+          <div className="flex-1" />
+          <button className="btn-secondary text-sm py-1.5" onClick={onClose}>ביטול</button>
+          <button className="btn-primary text-sm py-1.5" onClick={() => save.mutate()} disabled={save.isPending}>
+            {save.isPending ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} שמור
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
