@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Upload, Loader2, FileSpreadsheet, Trash2, Check } from "lucide-react";
+import { Upload, Loader2, FileSpreadsheet, Trash2, Check, FolderUp } from "lucide-react";
 import * as api from "../api";
 import type { UploadedDataset } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -12,6 +12,8 @@ export default function DataUploadPage() {
   const cid = Number(clientId);
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
+  const [folder, setFolder] = useState<{ total: number; done: number; errors: string[] } | null>(null);
 
   const { data: client } = useQuery({ queryKey: ["client", cid], queryFn: () => api.getClient(cid), enabled: !!cid });
   const { data: datasets, isLoading } = useQuery({ queryKey: ["datasets", cid], queryFn: () => api.listDatasets(cid), enabled: !!cid });
@@ -30,6 +32,20 @@ export default function DataUploadPage() {
     upload.mutate({ name: file.name, text });
   }
 
+  async function handleFolder(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []).filter((f) => /\.(csv|tsv|txt)$/i.test(f.name));
+    if (folderRef.current) folderRef.current.value = "";
+    if (files.length === 0) { setFolder({ total: 0, done: 0, errors: ["לא נמצאו קבצי CSV/TSV/TXT בתיקייה"] }); return; }
+    const errors: string[] = [];
+    setFolder({ total: files.length, done: 0, errors });
+    for (const f of files) {
+      try { await api.uploadData(cid, f.name, await f.text()); }
+      catch { errors.push(f.name); }
+      setFolder((s) => s ? { ...s, done: s.done + 1, errors } : s);
+    }
+    invalidate();
+  }
+
   const mappedFields = (m: Record<string, string> | null) => m ? Object.entries(m).filter(([, v]) => v && v !== "null").map(([k]) => k) : [];
 
   return (
@@ -38,10 +54,22 @@ export default function DataUploadPage() {
 
       <div className="card mb-6">
         <p className="text-sm text-slate-600 mb-3">העלה קובץ CSV/TSV מכל כלי (GA4, ZEFO, Keyword Planner, Search Console ועוד). המערכת תזהה לבד את המקור, העמודות וטווח התאריכים, ותשמור את הנתונים מנורמלים.</p>
-        <label className="btn-primary cursor-pointer inline-flex">
-          {upload.isPending ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />} {upload.isPending ? "מזהה ומעלה..." : "בחר קובץ להעלאה"}
-          <input ref={fileRef} type="file" accept=".csv,.tsv,.txt" className="hidden" onChange={handleFile} disabled={upload.isPending} />
-        </label>
+        <div className="flex flex-wrap gap-2">
+          <label className="btn-primary cursor-pointer inline-flex">
+            {upload.isPending ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />} {upload.isPending ? "מזהה ומעלה..." : "בחר קובץ להעלאה"}
+            <input ref={fileRef} type="file" accept=".csv,.tsv,.txt" className="hidden" onChange={handleFile} disabled={upload.isPending} />
+          </label>
+          <label className="btn-secondary cursor-pointer inline-flex">
+            {folder && folder.done < folder.total ? <Loader2 size={18} className="animate-spin" /> : <FolderUp size={18} />} העלה תיקייה שלמה
+            <input ref={folderRef} type="file" className="hidden" onChange={handleFolder} {...{ webkitdirectory: "", directory: "" } as any} multiple />
+          </label>
+        </div>
+        {folder && (
+          <div className="mt-3 text-sm text-slate-600">
+            {folder.done < folder.total ? `מעלה ${folder.done}/${folder.total} קבצים...` : `הושלם: ${folder.done - folder.errors.length}/${folder.total} הצליחו.`}
+            {folder.errors.length > 0 && <span className="text-rose-600"> נכשלו: {folder.errors.join(", ")}</span>}
+          </div>
+        )}
         {upload.isError && <div className="mt-3 text-sm text-rose-600">{(upload.error as any)?.message}</div>}
         {upload.isSuccess && upload.data && (
           <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-800">

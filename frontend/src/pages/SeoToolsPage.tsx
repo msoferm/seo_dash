@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Stethoscope, FileText, Loader2, Copy, Check, Wrench, X, Pencil, RotateCcw, ShieldCheck, Target, Plus } from "lucide-react";
+import { Stethoscope, FileText, Loader2, Copy, Check, Wrench, X, Pencil, RotateCcw, ShieldCheck, Target, Plus, CheckCheck, MessageCircle } from "lucide-react";
 import * as api from "../api";
 import type { AuditIssueRow, AuditSeverity, EeatResult } from "../api";
 import PageHeader from "../components/PageHeader";
+import TaskAssistant, { AssistantFab } from "./TaskAssistant";
+import type { AssistantSeed } from "./TaskAssistant";
 
 const SEV_BADGE: Record<AuditSeverity, string> = {
   high: "bg-rose-50 text-rose-700", medium: "bg-amber-50 text-amber-700", low: "bg-slate-100 text-slate-600",
@@ -24,6 +26,14 @@ export default function SeoToolsPage() {
   const apply = useMutation({ mutationFn: (v: { id: number; modification?: string }) => api.applyAuditFix(v.id, v.modification), onSuccess: () => { setModifyId(null); invalidate(); } });
   const reject = useMutation({ mutationFn: (id: number) => api.rejectAuditIssue(id), onSuccess: invalidate });
   const reset = useMutation({ mutationFn: (id: number) => api.resetAuditIssue(id), onSuccess: invalidate });
+  const markDone = useMutation({ mutationFn: (id: number) => api.setAuditStatus(id, "applied", "סומן כבוצע ידנית"), onSuccess: invalidate });
+
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatSeed, setChatSeed] = useState<AssistantSeed | null>(null);
+  const askAudit = (i: AuditIssueRow) => {
+    setChatSeed({ title: i.issue, nonce: Date.now(), context: `בעיית אודיט: "${i.issue}" | חומרה: ${i.severity} | עמוד: ${i.page} | תיקון מומלץ: ${i.fix || "—"}` });
+    setChatOpen(true);
+  };
 
   const [modifyId, setModifyId] = useState<number | null>(null);
   const [modText, setModText] = useState("");
@@ -117,6 +127,8 @@ export default function SeoToolsPage() {
                           <div className="flex items-center gap-1 flex-wrap">
                             <button className="btn-primary text-xs py-1 px-2" onClick={() => apply.mutate({ id: i.id })}><Wrench size={13} /> קבל ויישם</button>
                             <button className="btn-secondary text-xs py-1 px-2" onClick={() => { setModifyId(i.id); setModText(""); }}><Pencil size={13} /> עם שינוי</button>
+                            <button className="btn-secondary text-xs py-1 px-2" onClick={() => markDone.mutate(i.id)} title="סמן כבוצע ידנית (בלי הרצה)"><CheckCheck size={13} /> בוצע</button>
+                            <button className="btn-secondary text-xs py-1 px-2" onClick={() => askAudit(i)} title="שאל את קלוד"><MessageCircle size={13} /> שאל</button>
                             <button className="text-xs py-1 px-2 rounded text-rose-600 hover:bg-rose-50" onClick={() => reject.mutate(i.id)}><X size={13} /> דחה</button>
                           </div>
                         )}
@@ -225,6 +237,9 @@ export default function SeoToolsPage() {
           <p className="text-slate-400 text-sm">הזן מילת מפתח וקבל בריף מבוסס-SERP לכתיבה.</p>
         )}
       </div>
+
+      <AssistantFab onClick={() => { setChatSeed(null); setChatOpen(true); }} />
+      <TaskAssistant cid={cid} open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} />
     </div>
   );
 }

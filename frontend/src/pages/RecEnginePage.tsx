@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Sparkles, Loader2, ExternalLink, Wrench, Pencil, Check, CheckCheck, FileText, TrendingUp, EyeOff, MessageCircle } from "lucide-react";
+import { Sparkles, Loader2, ExternalLink, Wrench, Pencil, Check, CheckCheck, FileText, TrendingUp, EyeOff, MessageCircle, LayoutList, ChevronDown, ChevronUp } from "lucide-react";
 import * as api from "../api";
 import type { Recommendation, RecType } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -91,6 +91,24 @@ function RecCard({ r, onExample, onApply, onIgnore, onDone, onAsk, busy }: {
   );
 }
 
+function PageGroup({ page, recs, children }: { page: string; recs: Recommendation[]; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const label = page === "(ללא עמוד)" ? page : (page.replace(/^https?:\/\/[^/]+/, "") || page);
+  const pending = recs.filter((r) => r.status === "pending").length;
+  return (
+    <div className="card p-0 overflow-hidden">
+      <button className="w-full flex items-center justify-between gap-2 p-4 hover:bg-slate-50 text-right" onClick={() => setOpen((o) => !o)}>
+        <div className="min-w-0">
+          <div className="font-semibold text-slate-900 flex items-center gap-2"><LayoutList size={16} className="text-brand-600 shrink-0" /> <span className="truncate">{label}</span></div>
+          <div className="text-xs text-slate-400 mt-0.5">{recs.length} המלצות{pending > 0 ? ` · ${pending} ממתינות` : ""}</div>
+        </div>
+        {open ? <ChevronUp size={18} className="text-slate-400 shrink-0" /> : <ChevronDown size={18} className="text-slate-400 shrink-0" />}
+      </button>
+      {open && <div className="p-4 pt-0 space-y-3 border-t border-slate-100">{children}</div>}
+    </div>
+  );
+}
+
 export default function RecEnginePage() {
   const { clientId } = useParams();
   const cid = Number(clientId);
@@ -98,6 +116,7 @@ export default function RecEnginePage() {
   const [months, setMonths] = useState<3 | 6 | 12>(3);
   const [filter, setFilter] = useState<"all" | "pending" | "applied" | "done" | "ignored">("pending");
   const [typeFilter, setTypeFilter] = useState<RecType | "all">("all");
+  const [groupByPage, setGroupByPage] = useState(false);
 
   const { data: client } = useQuery({ queryKey: ["client", cid], queryFn: () => api.getClient(cid), enabled: !!cid });
   const { data: recs, isLoading } = useQuery({ queryKey: ["recs", cid], queryFn: () => api.listRecommendations(cid), enabled: !!cid });
@@ -125,6 +144,17 @@ export default function RecEnginePage() {
   const types = [...new Set(all.map((r) => r.type))];
   const typeCount = (tp: RecType) => byStatus.filter((r) => r.type === tp).length;
 
+  const renderCard = (r: Recommendation) => (
+    <RecCard key={r.id} r={r}
+      onExample={(id) => example.mutate(id)}
+      onApply={(id, mod) => apply.mutate({ id, mod })}
+      onIgnore={(id) => ignore.mutate(id)}
+      onDone={(id) => done.mutate(id)}
+      onAsk={onAsk}
+      busy={{ example: example.isPending && example.variables === r.id, apply: apply.isPending && apply.variables?.id === r.id }}
+    />
+  );
+
   return (
     <div>
       <PageHeader
@@ -132,6 +162,9 @@ export default function RecEnginePage() {
         subtitle={client ? `${client.name} · כל ההזדמנויות במקום אחד, מדורגות לפי פוטנציאל` : "מנוע המלצות SEO"}
         actions={
           <>
+            <button className={`btn-secondary ${groupByPage ? "bg-brand-50 text-brand-700 border-brand-200" : ""}`} onClick={() => setGroupByPage((g) => !g)} title="קבץ המלצות לפי עמוד">
+              <LayoutList size={18} /> {groupByPage ? "תצוגה רגילה" : "קבץ לפי עמוד"}
+            </button>
             <select className="input py-1.5 text-sm w-28" value={months} onChange={(e) => setMonths(Number(e.target.value) as any)}>
               <option value={3}>3 חודשים</option>
               <option value={6}>6 חודשים</option>
@@ -183,17 +216,16 @@ export default function RecEnginePage() {
           <div className="flex-1 min-w-0 space-y-4">
             {visible.length === 0 ? (
               <div className="card text-center py-10 text-slate-400 text-sm">אין המלצות בסינון הזה.</div>
+            ) : groupByPage ? (
+              [...visible.reduce((m, r) => { const k = r.page || "(ללא עמוד)"; (m.get(k) || m.set(k, []).get(k)!).push(r); return m; }, new Map<string, Recommendation[]>()).entries()]
+                .sort((a, b) => b[1].length - a[1].length)
+                .map(([page, rs]) => (
+                  <PageGroup key={page} page={page} recs={rs}>
+                    {rs.map((r) => renderCard(r))}
+                  </PageGroup>
+                ))
             ) : (
-              visible.map((r) => (
-                <RecCard key={r.id} r={r}
-                  onExample={(id) => example.mutate(id)}
-                  onApply={(id, mod) => apply.mutate({ id, mod })}
-                  onIgnore={(id) => ignore.mutate(id)}
-                  onDone={(id) => done.mutate(id)}
-                  onAsk={onAsk}
-                  busy={{ example: example.isPending && example.variables === r.id, apply: apply.isPending && apply.variables?.id === r.id }}
-                />
-              ))
+              visible.map((r) => renderCard(r))
             )}
           </div>
         </div>
