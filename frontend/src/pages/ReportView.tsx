@@ -34,6 +34,7 @@ export default function ReportView() {
 
   const { data: report, isLoading: loadingReport } = useQuery({ queryKey: ["report", rid], queryFn: () => api.getReport(rid), enabled: !!rid });
   const { data: client } = useQuery({ queryKey: ["client", cid], queryFn: () => api.getClient(cid), enabled: !!cid });
+  const { data: branding } = useQuery({ queryKey: ["branding", cid], queryFn: () => api.getBranding(cid), enabled: !!cid });
 
   const from = report?.period_from;
   const to = report?.period_to;
@@ -139,12 +140,18 @@ export default function ReportView() {
       )}
 
       {/* ===== The printable report ===== */}
-      <div className="report-sheet bg-white border border-slate-200 rounded-xl shadow-sm p-8 max-w-4xl mx-auto">
+      {branding?.brand_color && (
+        <style>{`.rep-brand .border-brand-600{border-color:${branding.brand_color}!important}.rep-brand .border-brand-500{border-color:${branding.brand_color}!important}.rep-brand .text-brand-700{color:${branding.brand_color}!important}`}</style>
+      )}
+      <div className="rep-brand report-sheet bg-white border border-slate-200 rounded-xl shadow-sm p-8 max-w-4xl mx-auto">
         {/* Cover / header */}
         <div className="flex items-center justify-between border-b-2 border-brand-600 pb-4 mb-6">
-          <div>
-            <div className="text-brand-700 font-bold text-lg">{client?.name || "לקוח"}</div>
-            <div className="text-xs text-slate-400">{client?.domain}</div>
+          <div className="flex items-center gap-3">
+            {branding?.logo_url && <img src={branding.logo_url} alt={client?.name || ""} className="h-12 max-w-[160px] object-contain" />}
+            <div>
+              <div className="text-brand-700 font-bold text-lg">{client?.name || "לקוח"}</div>
+              <div className="text-xs text-slate-400">{client?.domain}</div>
+            </div>
           </div>
           <div className="text-left">
             <h1 className="text-2xl font-bold text-slate-900">דוח קידום אורגני</h1>

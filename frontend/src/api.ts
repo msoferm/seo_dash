@@ -1416,6 +1416,18 @@ export async function deleteReport(id: number): Promise<void> {
   if (error) throw error;
 }
 
+// --- Per-client report branding (logo + accent color) ---
+export interface ClientBranding { client_id: number; logo_url: string | null; brand_color: string | null }
+export async function getBranding(clientId: number): Promise<ClientBranding | null> {
+  const { data, error } = await supabase.from("client_branding").select("client_id, logo_url, brand_color").eq("client_id", clientId).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+export async function saveBranding(clientId: number, body: { logo_url?: string | null; brand_color?: string | null }): Promise<void> {
+  const { error } = await supabase.from("client_branding").upsert({ client_id: clientId, ...body, updated_at: new Date().toISOString() }, { onConflict: "client_id" });
+  if (error) throw error;
+}
+
 // --- Customizable sidebar menu layout (team-wide) ---
 export async function getNavConfig(): Promise<NavEntry[] | null> {
   const { data, error } = await supabase.from("app_settings").select("value").eq("key", "client_nav").maybeSingle();

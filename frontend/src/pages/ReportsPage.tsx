@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Plus, Trash2, Loader2, ArrowLeft, Sparkles, ListChecks } from "lucide-react";
+import { FileText, Plus, Trash2, Loader2, ArrowLeft, Sparkles, ListChecks, Image as ImageIcon } from "lucide-react";
 import * as api from "../api";
 import type { Report } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -95,6 +95,25 @@ export default function ReportsPage() {
     },
   });
 
+  // Branding (logo + color)
+  const { data: branding } = useQuery({ queryKey: ["branding", cid], queryFn: () => api.getBranding(cid), enabled: !!cid });
+  const saveBrand = useMutation({ mutationFn: (b: { logo_url?: string | null; brand_color?: string | null }) => api.saveBranding(cid, b), onSuccess: () => qc.invalidateQueries({ queryKey: ["branding", cid] }) });
+  async function handleLogo(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]; if (!file) return;
+    const dataUrl = await new Promise<string>((res, rej) => {
+      const img = new Image();
+      const r = new FileReader();
+      r.onload = () => { img.onload = () => {
+        const max = 360; const scale = Math.min(1, max / img.width);
+        const c = document.createElement("canvas"); c.width = img.width * scale; c.height = img.height * scale;
+        c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
+        res(c.toDataURL("image/png"));
+      }; img.onerror = rej; img.src = r.result as string; };
+      r.onerror = rej; r.readAsDataURL(file);
+    });
+    saveBrand.mutate({ logo_url: dataUrl });
+  }
+
   return (
     <div>
       <PageHeader
@@ -177,6 +196,25 @@ export default function ReportsPage() {
             ))}
           </ul>
         )}
+      </div>
+
+      {/* Branding */}
+      <div className="card mb-6">
+        <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-3"><ImageIcon size={18} className="text-brand-600" /> מיתוג הדוח (לוגו + צבע)</h3>
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2">
+            {branding?.logo_url ? <img src={branding.logo_url} alt="logo" className="h-12 border border-slate-200 rounded p-1 bg-white" /> : <div className="h-12 w-20 bg-slate-100 rounded flex items-center justify-center text-slate-400 text-xs">אין לוגו</div>}
+            <label className="btn-secondary text-sm py-1.5 cursor-pointer">העלה לוגו<input type="file" accept="image/*" className="hidden" onChange={handleLogo} /></label>
+            {branding?.logo_url && <button className="text-xs text-rose-600 hover:underline" onClick={() => saveBrand.mutate({ logo_url: null })}>הסר</button>}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-600">צבע מותג:</span>
+            <input type="color" className="h-9 w-12 rounded border border-slate-200 cursor-pointer" value={branding?.brand_color || "#1d4ed8"} onChange={(e) => saveBrand.mutate({ brand_color: e.target.value })} />
+            {branding?.brand_color && <button className="text-xs text-slate-500 hover:underline" onClick={() => saveBrand.mutate({ brand_color: null })}>ברירת מחדל</button>}
+          </div>
+          {saveBrand.isPending && <Loader2 size={16} className="animate-spin text-slate-400" />}
+        </div>
+        <p className="text-xs text-slate-400 mt-2">הלוגו והצבע יופיעו בכותרת הדוח ובהדפסה/PDF.</p>
       </div>
 
       {/* Manual links bank */}

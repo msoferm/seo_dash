@@ -93,7 +93,25 @@ Deno.serve(async (req) => {
     const { error } = await sb.from("report_items").upsert(rows, { onConflict: "report_id,source_type,source_ref", ignoreDuplicates: true });
     if (error) throw new Error(error.message);
 
-    return jsonResponse({ added: rows.length });
+    // Backfill AI "why" for items missing it (e.g. auto-logged raw items).
+    let backfilled = 0;
+    const { data: missing } = await sb.from("report_items").select("id, title, page_url").eq("report_id", report_id).is("why", null).limit(40);
+    if (missing && missing.length) {
+      try {
+        const sys = "אתה כותב דוח קידום ללקוח. לכל פעולה, כתוב הסבר קצר (1-2 משפטים) למה היא בוצעה ואיך היא תורמת לקידום ולעסק — בשפה ללקוח, חיובית ומקצועית. " +
+          'החזר אך ורק JSON: {"items":[{"why":"..."}]} באותו סדר. התחל ישירות ב-{.';
+        const um = `עסק: ${client?.name || ""}.\n\nפעולות:\n` + missing.map((m: any, i: number) => `${i + 1}. ${m.title}${m.page_url ? ` | ${m.page_url}` : ""}`).join("\n");
+        const resp = await callClaude({ model: DEFAULT_MODEL, max_tokens: 3000, system: sys, messages: [{ role: "user", content: um }] });
+        const parsed = extractJson(textOf(resp));
+        const whys: any[] = Array.isArray(parsed) ? parsed : (parsed.items || []);
+        for (let i = 0; i < missing.length; i++) {
+          const why = (whys[i]?.why || "").toString().slice(0, 1000);
+          if (why) { await sb.from("report_items").update({ why }).eq("id", missing[i].id); backfilled++; }
+        }
+      } catch { /* leave as-is */ }
+    }
+
+    return jsonResponse({ added: rows.length, backfilled });
   } catch (e) {
     return errorResponse(`שגיאה בהוספת פעולות לדוח: ${(e as Error).message}`, 500);
   }
