@@ -711,6 +711,17 @@ export async function listDatasets(clientId: number): Promise<UploadedDataset[]>
   if (error) throw error;
   return data || [];
 }
+export interface UploadedRow {
+  id: number; dataset_id: number; page: string | null; query: string | null; keyword: string | null;
+  clicks: number | null; impressions: number | null; ctr: number | null; position: number | null;
+  sessions: number | null; conversions: number | null;
+}
+export async function listUploadedRows(datasetId: number, limit = 50): Promise<UploadedRow[]> {
+  const { data, error } = await supabase.from("uploaded_rows").select("*").eq("dataset_id", datasetId).limit(limit);
+  if (error) throw error;
+  return data || [];
+}
+
 export async function deleteDataset(id: number): Promise<void> {
   const { error } = await supabase.from("uploaded_datasets").delete().eq("id", id);
   if (error) throw error;

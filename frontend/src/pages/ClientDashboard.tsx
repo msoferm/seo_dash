@@ -6,6 +6,7 @@ import * as api from "../api";
 import KpiCard from "../components/KpiCard";
 import PageHeader from "../components/PageHeader";
 import DataSourceBanner from "../components/DataSourceBanner";
+import UploadedDataPanel from "../components/UploadedDataPanel";
 import Spinner from "../components/Spinner";
 import EditClientModal from "../components/EditClientModal";
 import GscPropertyPicker from "../components/GscPropertyPicker";
@@ -406,6 +407,9 @@ export default function ClientDashboard() {
           </table>
         )}
       </div>
+
+      <UploadedDataPanel cid={cid} match={["Search Console"]} title="נתוני Search Console שהועלו" />
+      <UploadedDataPanel cid={cid} match={["Analytics"]} title="נתוני Analytics שהועלו" />
 
       {showEdit && <EditClientModal client={data.client} onClose={() => setShowEdit(false)} />}
       {showGscPicker && <GscPropertyPicker client={data.client} onClose={() => setShowGscPicker(false)} />}
