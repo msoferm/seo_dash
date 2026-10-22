@@ -75,6 +75,7 @@ export default function DataUploadPage() {
           <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-800">
             <div className="flex items-center gap-2 font-medium"><Check size={16} /> זוהה: {upload.data.source} · {upload.data.data_type}</div>
             <div className="text-xs text-emerald-700 mt-1">{upload.data.row_count} שורות · עמודות שזוהו: {mappedFields(upload.data.columns).join(", ") || "—"}{upload.data.date_from ? ` · תקופה: ${upload.data.date_from} – ${upload.data.date_to}` : ""}</div>
+            {upload.data.routed_to === "keywords" && <div className="text-xs text-emerald-800 mt-1 font-medium">✓ הנתונים שולבו אוטומטית בלשונית "מילות מפתח".</div>}
           </div>
         )}
       </div>

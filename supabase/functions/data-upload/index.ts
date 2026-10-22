@@ -50,7 +50,7 @@ Deno.serve(async (req) => {
     const sample = dataRows.slice(0, 5).map((r) => headers.map((h, i) => `${h}: ${r[i] ?? ""}`).join(" | ")).join("\n");
     const system =
       "אתה מזהה מקור של קובץ נתוני SEO. בהינתן שמות העמודות ודוגמאות שורות, זהה את המקור ומפה עמודות. " +
-      "החזר אך ורק JSON: {\"source\":\"Google Search Console|Google Analytics 4|ZEFO|Google Keyword Planner|אחר\",\"data_type\":\"תיאור קצר\",\"date_from\":\"YYYY-MM-DD או null\",\"date_to\":\"YYYY-MM-DD או null\",\"columns\":{\"page\":\"שם עמודה או null\",\"query\":\"...\",\"keyword\":\"...\",\"clicks\":\"...\",\"impressions\":\"...\",\"ctr\":\"...\",\"position\":\"...\",\"sessions\":\"...\",\"conversions\":\"...\"}}. " +
+      "החזר אך ורק JSON: {\"source\":\"Google Search Console|Google Analytics 4|ZEFO|Google Keyword Planner|אחר\",\"data_type\":\"תיאור קצר\",\"date_from\":\"YYYY-MM-DD או null\",\"date_to\":\"YYYY-MM-DD או null\",\"columns\":{\"page\":\"שם עמודה או null\",\"query\":\"...\",\"keyword\":\"...\",\"clicks\":\"...\",\"impressions\":\"...\",\"ctr\":\"...\",\"position\":\"...\",\"sessions\":\"...\",\"conversions\":\"...\",\"monthly_searches\":\"עמודת נפח חיפוש חודשי (Avg monthly searches) או null\",\"competition\":\"עמודת תחרות או null\"}}. " +
       "מפה כל שדה לשם העמודה בקובץ (בדיוק כפי שמופיע) או null אם אין. התחל ישירות ב-{.";
     const resp = await callClaude({ model: DEFAULT_MODEL, max_tokens: 800, system, messages: [{ role: "user", content: `עמודות: ${headers.join(" | ")}\n\nדוגמאות:\n${sample}` }] });
     let det: any;
@@ -58,7 +58,7 @@ Deno.serve(async (req) => {
 
     const cols = det.columns || {};
     const idx = (name: string | null | undefined) => (name ? headers.findIndex((h) => h.toLowerCase() === String(name).toLowerCase()) : -1);
-    const map = { page: idx(cols.page), query: idx(cols.query), keyword: idx(cols.keyword), clicks: idx(cols.clicks), impressions: idx(cols.impressions), ctr: idx(cols.ctr), position: idx(cols.position), sessions: idx(cols.sessions), conversions: idx(cols.conversions) };
+    const map = { page: idx(cols.page), query: idx(cols.query), keyword: idx(cols.keyword), clicks: idx(cols.clicks), impressions: idx(cols.impressions), ctr: idx(cols.ctr), position: idx(cols.position), sessions: idx(cols.sessions), conversions: idx(cols.conversions), monthly_searches: idx(cols.monthly_searches), competition: idx(cols.competition) };
 
     const { data: ds, error: dsErr } = await sb.from("uploaded_datasets").insert({
       client_id, filename: filename || null, source: det.source || "אחר", data_type: det.data_type || null,
@@ -85,7 +85,34 @@ Deno.serve(async (req) => {
       if (error) throw new Error(error.message);
     }
 
-    return jsonResponse({ dataset_id: ds.id, source: det.source, data_type: det.data_type, row_count: dataRows.length, columns: det.columns, date_from: det.date_from, date_to: det.date_to });
+    // ---- Route into canonical tables (SAFE cases only) ----
+    // Keyword Planner → keywords. Isolated under source='upload-data' (replaced each upload),
+    // so it never collides with the live sync or the dedicated CSV importer.
+    // GSC/GA4 are intentionally NOT merged: their exports are dateless aggregates and their
+    // tables sum by date with no provenance column, so merging would double-count live data.
+    let routed_to: string | null = null;
+    const srcLow = String(det.source || "").toLowerCase();
+    const isKP = srcLow.includes("keyword planner") || (map.keyword >= 0 && map.monthly_searches >= 0 && !srcLow.includes("search console"));
+    if (isKP && map.keyword >= 0) {
+      const kwRows = dataRows.map((r) => ({
+        client_id,
+        term: (r[map.keyword] || "").trim(),
+        monthly_searches: map.monthly_searches >= 0 ? (num(r[map.monthly_searches]) || 0) : 0,
+        competition: map.competition >= 0 ? ((r[map.competition] || "").trim() || null) : null,
+        position: map.position >= 0 ? num(r[map.position]) : null,
+        source: "upload-data",
+      })).filter((k) => k.term);
+      if (kwRows.length) {
+        await sb.from("keywords").delete().eq("client_id", client_id).eq("source", "upload-data");
+        for (let i = 0; i < kwRows.length; i += 500) {
+          const { error } = await sb.from("keywords").insert(kwRows.slice(i, i + 500));
+          if (error) throw new Error(`routing to keywords: ${error.message}`);
+        }
+        routed_to = "keywords";
+      }
+    }
+
+    return jsonResponse({ dataset_id: ds.id, source: det.source, data_type: det.data_type, row_count: dataRows.length, columns: det.columns, date_from: det.date_from, date_to: det.date_to, routed_to });
   } catch (e) {
     return errorResponse(`שגיאה בהעלאה: ${(e as Error).message}`, 500);
   }

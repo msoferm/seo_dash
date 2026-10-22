@@ -703,7 +703,7 @@ export interface UploadedDataset {
   id: number; client_id: number; filename: string | null; source: string | null; data_type: string | null;
   date_from: string | null; date_to: string | null; row_count: number; mapping: Record<string, string> | null; created_at: string;
 }
-export async function uploadData(clientId: number, filename: string, content: string): Promise<{ dataset_id: number; source: string; data_type: string; row_count: number; columns: Record<string, string>; date_from: string | null; date_to: string | null }> {
+export async function uploadData(clientId: number, filename: string, content: string): Promise<{ dataset_id: number; source: string; data_type: string; row_count: number; columns: Record<string, string>; date_from: string | null; date_to: string | null; routed_to?: string | null }> {
   return await invokeFn("data-upload", { client_id: clientId, filename, content });
 }
 export async function listDatasets(clientId: number): Promise<UploadedDataset[]> {
