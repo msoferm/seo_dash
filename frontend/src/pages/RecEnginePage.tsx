@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Sparkles, Loader2, ExternalLink, Wrench, Pencil, Check, CheckCheck, FileText, TrendingUp, EyeOff, MessageCircle, LayoutList, ChevronDown, ChevronUp } from "lucide-react";
+import { Sparkles, Loader2, ExternalLink, Wrench, Pencil, Check, CheckCheck, FileText, TrendingUp, EyeOff, MessageCircle, LayoutList, ChevronDown, ChevronUp, Newspaper } from "lucide-react";
 import * as api from "../api";
 import type { Recommendation, RecType } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -79,8 +79,9 @@ function RecCard({ r, onExample, onApply, onIgnore, onDone, onAsk, busy }: {
           </div>
         ) : (
           <div className="flex items-center gap-2 flex-wrap mt-3">
+            {r.type === "new_content" && <button className="btn-primary text-sm py-1.5" onClick={() => onApply(r.id)} disabled={busy.apply} title="צור הצעת מאמר בטאב הבלוג האוטומטי">{busy.apply ? <Loader2 size={15} className="animate-spin" /> : <Newspaper size={15} />} שלח לבלוג האוטומטי</button>}
             <button className="btn-secondary text-sm py-1.5" onClick={() => onExample(r.id)} disabled={busy.example}>{busy.example ? <Loader2 size={15} className="animate-spin" /> : <FileText size={15} />} צור דוגמה</button>
-            <button className="btn-primary text-sm py-1.5" onClick={() => onApply(r.id)} disabled={busy.apply}>{busy.apply ? <Loader2 size={15} className="animate-spin" /> : <Wrench size={15} />} בצע</button>
+            {r.type !== "new_content" && <button className="btn-primary text-sm py-1.5" onClick={() => onApply(r.id)} disabled={busy.apply}>{busy.apply ? <Loader2 size={15} className="animate-spin" /> : <Wrench size={15} />} בצע</button>}
             <button className="btn-secondary text-sm py-1.5" onClick={() => setModifying(true)}><Pencil size={15} /> עם שינוי</button>
             <button className="btn-secondary text-sm py-1.5" onClick={() => onDone(r.id)} title="סמן כבוצע ידנית (בלי הרצה)"><CheckCheck size={15} /> בוצע</button>
             <button className="btn-secondary text-sm py-1.5" onClick={() => onAsk(r)} title="שאל את קלוד על ההמלצה"><MessageCircle size={15} /> שאל</button>

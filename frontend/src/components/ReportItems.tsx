@@ -38,8 +38,9 @@ function ItemRow({ item, onChanged, selectable, selected, onToggleSelect }: {
   return (
     <li className="py-3 border-b border-slate-100 last:border-0">
       <div className="flex items-start justify-between gap-3">
+        {selectable && <input type="checkbox" checked={!!selected} onChange={() => onToggleSelect?.(item.id)} className="mt-1 h-4 w-4 shrink-0 accent-brand-600 cursor-pointer no-print" />}
         <div className="flex-1 min-w-0">
-          <div className="font-semibold text-slate-900">{item.title}</div>
+          <div className="font-semibold text-slate-900 flex items-center gap-1.5">{item.custom_group && <span title={`אוחד תחת: ${item.custom_group}`} className="inline-flex shrink-0"><CheckCircle2 size={14} className="text-emerald-500" /></span>}{item.title}</div>
           {item.why && <div className="text-sm text-slate-600 mt-0.5 whitespace-pre-wrap">{item.why}</div>}
           {item.page_url && <a href={item.page_url} target="_blank" rel="noreferrer" className="text-xs text-brand-600 hover:underline inline-flex items-center gap-0.5 mt-1"><ExternalLink size={11} /> למעבר לדף</a>}
         </div>
@@ -90,19 +91,40 @@ export default function ReportItems({ reportId, clientId }: { reportId: number; 
     onSuccess: () => { setT(""); setW(""); setP(""); setAdding(false); invalidate(); },
   });
 
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const toggleSel = (id: number) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const merge = useMutation({
+    mutationFn: (label: string) => api.setReportItemsGroup([...selected], label),
+    onSuccess: () => { setSelected(new Set()); setSelectMode(false); invalidate(); },
+  });
+  const unmerge = useMutation({ mutationFn: (ids: number[]) => api.setReportItemsGroup(ids, null), onSuccess: invalidate });
+
   return (
     <section className="mb-6">
       <div className="flex items-center justify-between gap-2 mb-2">
         <h2 className="text-lg font-bold text-slate-900 border-r-4 border-brand-500 pr-2">
           פעולות שבוצעו <span className="text-slate-400 text-sm font-normal">({(items || []).length})</span>
         </h2>
-        <div className="flex gap-1.5 no-print">
+        <div className="flex gap-1.5 no-print flex-wrap">
+          <button className={`btn-secondary text-sm py-1.5 ${selectMode ? "bg-brand-50 text-brand-700 border-brand-200" : ""}`} onClick={() => { setSelectMode((m) => !m); setSelected(new Set()); }}><Link2 size={15} /> אחד משימות</button>
           <button className="btn-secondary text-sm py-1.5" onClick={() => setAdding((a) => !a)}><Plus size={15} /> הוסף ידנית</button>
           <button className="btn-primary text-sm py-1.5" onClick={() => sync.mutate()} disabled={sync.isPending} title="משוך את כל הפעולות שבוצעו במערכת לדוח">
             {sync.isPending ? <Loader2 size={15} className="animate-spin" /> : <ListChecks size={15} />} הוסף פעולות שבוצעו
           </button>
         </div>
       </div>
+
+      {selectMode && (
+        <div className="no-print mb-3 bg-brand-50 border border-brand-200 rounded-lg p-2 flex items-center gap-2 text-sm">
+          <span className="text-brand-800">נבחרו {selected.size}</span>
+          <button className="btn-primary text-xs py-1 px-2" disabled={selected.size === 0 || merge.isPending}
+            onClick={() => { const l = prompt("כותרת לקבוצה המאוחדת (תופיע בדוח):"); if (l && l.trim()) merge.mutate(l.trim()); }}>
+            <Link2 size={13} /> אחד תחת כותרת
+          </button>
+          <button className="text-xs py-1 px-2 rounded text-slate-500 hover:bg-slate-100" onClick={() => { setSelectMode(false); setSelected(new Set()); }}>ביטול</button>
+        </div>
+      )}
 
       {sync.isSuccess && <div className="no-print text-sm text-emerald-600 mb-2">נוספו {(sync.data as any).added} פעולות{(sync.data as any).note ? ` — ${(sync.data as any).note}` : ""}.</div>}
       {sync.isError && <div className="no-print text-sm text-rose-600 mb-2">{(sync.error as any)?.message}</div>}
@@ -126,16 +148,31 @@ export default function ReportItems({ reportId, clientId }: { reportId: number; 
       ) : (
         (() => {
           const order = ["קישורים", "תוכן באתר", "אופטימיזציה טכנית ותיקונים", "המרות ו-UX", "אחר"];
-          const groups = new Map<string, typeof items>();
-          for (const it of items!) { const c = it.category || "אחר"; if (!groups.has(c)) groups.set(c, [] as any); (groups.get(c) as any).push(it); }
-          const keys = [...groups.keys()].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
+          const custom = new Map<string, ReportItem[]>();
+          const byCat = new Map<string, ReportItem[]>();
+          for (const it of items!) {
+            if (it.custom_group) { if (!custom.has(it.custom_group)) custom.set(it.custom_group, []); custom.get(it.custom_group)!.push(it); }
+            else { const c = it.category || "אחר"; if (!byCat.has(c)) byCat.set(c, []); byCat.get(c)!.push(it); }
+          }
+          const catKeys = [...byCat.keys()].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
           return (
             <div className="space-y-4">
-              {keys.map((c) => (
-                <div key={c}>
-                  <h3 className="text-sm font-bold text-blue-700 bg-blue-50 rounded-md px-3 py-1.5 mb-1 border-r-4 border-blue-400">{c} <span className="font-normal text-blue-400">({(groups.get(c) as any).length})</span></h3>
+              {[...custom.entries()].map(([label, its]) => (
+                <div key={`c-${label}`}>
+                  <h3 className="text-sm font-bold text-emerald-700 bg-emerald-50 rounded-md px-3 py-1.5 mb-1 border-r-4 border-emerald-400 flex items-center justify-between">
+                    <span>{label} <span className="font-normal text-emerald-500">({its.length})</span></span>
+                    <button className="no-print text-xs text-emerald-600 hover:underline" onClick={() => unmerge.mutate(its.map((x) => x.id))}>בטל איחוד</button>
+                  </h3>
                   <ul className="divide-y divide-slate-100">
-                    {(groups.get(c) as any).map((it: any) => <ItemRow key={it.id} item={it} onChanged={invalidate} />)}
+                    {its.map((it) => <ItemRow key={it.id} item={it} onChanged={invalidate} />)}
+                  </ul>
+                </div>
+              ))}
+              {catKeys.map((c) => (
+                <div key={c}>
+                  <h3 className="text-sm font-bold text-blue-700 bg-blue-50 rounded-md px-3 py-1.5 mb-1 border-r-4 border-blue-400">{c} <span className="font-normal text-blue-400">({byCat.get(c)!.length})</span></h3>
+                  <ul className="divide-y divide-slate-100">
+                    {byCat.get(c)!.map((it) => <ItemRow key={it.id} item={it} onChanged={invalidate} selectable={selectMode} selected={selected.has(it.id)} onToggleSelect={toggleSel} />)}
                   </ul>
                 </div>
               ))}

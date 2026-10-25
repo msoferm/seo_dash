@@ -6,6 +6,8 @@ import * as api from "../api";
 import type { BlogPost } from "../api";
 import PageHeader from "../components/PageHeader";
 import Spinner from "../components/Spinner";
+import TaskAssistant, { AssistantFab } from "./TaskAssistant";
+import type { AssistantSeed } from "./TaskAssistant";
 
 function ConnectForm({ clientId, onDone }: { clientId: number; onDone: () => void }) {
   const [siteUrl, setSiteUrl] = useState("");
@@ -79,6 +81,9 @@ export default function BlogPage() {
 
   const [instructions, setInstructions] = useState("");
   const [bridgeSecret, setBridgeSecret] = useState("");
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatSeed, setChatSeed] = useState<AssistantSeed | null>(null);
+  const askContent = () => { setChatSeed({ title: "כתיבת תוכן לבלוג", nonce: Date.now(), context: `התייעצות על כתיבת תוכן/מאמרים לבלוג של ${client?.name || "הלקוח"} (${client?.domain || ""}). נושאים: רעיונות למאמרים, מבנה, טון, מילות מפתח, שיפור טיוטות.` }); setChatOpen(true); };
   useEffect(() => { if (wp) setInstructions(wp.blog_instructions || ""); }, [wp]);
   const saveInstructions = useMutation({ mutationFn: () => api.updateWordpressSettings(cid, { blog_instructions: instructions }), onSuccess: () => qc.invalidateQueries({ queryKey: ["wp", cid] }) });
 
@@ -232,6 +237,9 @@ export default function BlogPage() {
               </ul>
             )}
           </div>
+
+          <AssistantFab onClick={askContent} />
+          <TaskAssistant cid={cid} open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} />
         </>
       )}
     </div>
