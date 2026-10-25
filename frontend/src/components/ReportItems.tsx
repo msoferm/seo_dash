@@ -1,10 +1,13 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, Pencil, Trash2, Save, X, Wand2, ExternalLink, Check, ListChecks } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, Save, X, Wand2, ExternalLink, Check, ListChecks, CheckCircle2, Link2 } from "lucide-react";
 import * as api from "../api";
 import type { ReportItem } from "../api";
 
-function ItemRow({ item, onChanged }: { item: ReportItem; onChanged: () => void }) {
+function ItemRow({ item, onChanged, selectable, selected, onToggleSelect }: {
+  item: ReportItem; onChanged: () => void;
+  selectable?: boolean; selected?: boolean; onToggleSelect?: (id: number) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(item.title);
   const [why, setWhy] = useState(item.why || "");
@@ -38,7 +41,7 @@ function ItemRow({ item, onChanged }: { item: ReportItem; onChanged: () => void 
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-slate-900">{item.title}</div>
           {item.why && <div className="text-sm text-slate-600 mt-0.5 whitespace-pre-wrap">{item.why}</div>}
-          {item.page_url && <a href={item.page_url} target="_blank" rel="noreferrer" className="text-xs text-brand-600 hover:underline inline-flex items-center gap-0.5 mt-1 break-all"><ExternalLink size={11} /> {item.page_url.replace(/^https?:\/\/[^/]+/, "") || item.page_url}</a>}
+          {item.page_url && <a href={item.page_url} target="_blank" rel="noreferrer" className="text-xs text-brand-600 hover:underline inline-flex items-center gap-0.5 mt-1"><ExternalLink size={11} /> למעבר לדף</a>}
         </div>
         <div className="shrink-0 flex items-center gap-1 no-print">
           <button className="text-slate-400 hover:text-brand-600 p-1" title="שפר הסבר ב-AI" onClick={() => setImproveOpen((o) => !o)}><Wand2 size={15} /></button>
@@ -121,9 +124,24 @@ export default function ReportItems({ reportId, clientId }: { reportId: number; 
       {(items || []).length === 0 ? (
         <p className="text-slate-400 text-sm">אין עדיין פעולות. לחץ "הוסף פעולות שבוצעו" כדי למשוך אוטומטית את כל מה שבוצע, או הוסף ידנית.</p>
       ) : (
-        <ul className="divide-y divide-slate-100">
-          {(items || []).map((it) => <ItemRow key={it.id} item={it} onChanged={invalidate} />)}
-        </ul>
+        (() => {
+          const order = ["קישורים", "תוכן באתר", "אופטימיזציה טכנית ותיקונים", "המרות ו-UX", "אחר"];
+          const groups = new Map<string, typeof items>();
+          for (const it of items!) { const c = it.category || "אחר"; if (!groups.has(c)) groups.set(c, [] as any); (groups.get(c) as any).push(it); }
+          const keys = [...groups.keys()].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
+          return (
+            <div className="space-y-4">
+              {keys.map((c) => (
+                <div key={c}>
+                  <h3 className="text-sm font-bold text-blue-700 bg-blue-50 rounded-md px-3 py-1.5 mb-1 border-r-4 border-blue-400">{c} <span className="font-normal text-blue-400">({(groups.get(c) as any).length})</span></h3>
+                  <ul className="divide-y divide-slate-100">
+                    {(groups.get(c) as any).map((it: any) => <ItemRow key={it.id} item={it} onChanged={invalidate} />)}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          );
+        })()
       )}
     </section>
   );

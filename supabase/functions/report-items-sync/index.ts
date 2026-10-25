@@ -40,25 +40,29 @@ Deno.serve(async (req) => {
       sb.from("report_items").select("source_type, source_ref").eq("report_id", report_id),
     ]);
 
+    const CONTENT_REC = new Set(["title_meta", "improve_page", "add_keywords", "new_content", "internal_link", "cannibalization"]);
+    const catForPillar: Record<string, string> = { content: "תוכן באתר", traffic: "תוכן באתר", technical: "אופטימיזציה טכנית ותיקונים", speed: "אופטימיזציה טכנית ותיקונים", authority: "קישורים", conversions: "המרות ו-UX" };
+    const auditCat = (issue: string) => /h1|מטא|meta|כותר|title|תוכן|content|faq|alt|תיאור/i.test(issue) ? "תוכן באתר" : "אופטימיזציה טכנית ותיקונים";
+
     const have = new Set((existR.data || []).map((r: any) => `${r.source_type}:${r.source_ref}`));
-    type Cand = { source_type: string; source_ref: string; title: string; area: string; page: string | null; hint: string };
+    type Cand = { source_type: string; source_ref: string; title: string; area: string; category: string; page: string | null; hint: string };
     const cands: Cand[] = [];
     for (const r of recR.data || []) {
       const k = `recommendation:${r.id}`; if (have.has(k)) continue;
-      cands.push({ source_type: "recommendation", source_ref: String(r.id), title: r.title || "", area: REC_AREA[r.type] || "תוכן", page: r.page, hint: r.type });
+      cands.push({ source_type: "recommendation", source_ref: String(r.id), title: r.title || "", area: REC_AREA[r.type] || "תוכן", category: CONTENT_REC.has(r.type) ? "תוכן באתר" : "אופטימיזציה טכנית ותיקונים", page: r.page, hint: r.type });
     }
     for (const a of audR.data || []) {
       const k = `audit:${a.id}`; if (have.has(k)) continue;
-      cands.push({ source_type: "audit", source_ref: String(a.id), title: a.issue || "", area: "אודיט טכני", page: a.page, hint: "audit" });
+      cands.push({ source_type: "audit", source_ref: String(a.id), title: a.issue || "", area: "אודיט טכני", category: auditCat(a.issue || ""), page: a.page, hint: "audit" });
     }
     for (const t of taskR.data || []) {
       if (t.source_type === "recommendation" || t.source_type === "audit") continue;
       const k = `task:${t.id}`; if (have.has(k)) continue;
-      cands.push({ source_type: "task", source_ref: String(t.id), title: t.title || "", area: PILLAR_AREA[t.category || ""] || "משימה", page: t.page_url, hint: t.note || "" });
+      cands.push({ source_type: "task", source_ref: String(t.id), title: t.title || "", area: PILLAR_AREA[t.category || ""] || "משימה", category: catForPillar[t.category || ""] || "אחר", page: t.page_url, hint: t.note || "" });
     }
     for (const l of linkR.data || []) {
       const k = `link:${l.id}`; if (have.has(k)) continue;
-      cands.push({ source_type: "link", source_ref: String(l.id), title: `בניית קישור: ${l.link_type}`, area: "קישורים נכנסים", page: l.url, hint: l.notes || "" });
+      cands.push({ source_type: "link", source_ref: String(l.id), title: `בניית קישור: ${l.link_type}`, area: "קישורים נכנסים", category: "קישורים", page: l.url, hint: l.notes || "" });
     }
     const batch = cands.slice(0, 40);
     if (batch.length === 0) return jsonResponse({ added: 0, note: "אין פעולות חדשות להוספה." });
@@ -86,7 +90,7 @@ Deno.serve(async (req) => {
       report_id, client_id,
       title: (items[i]?.title || c.title || "פעולה").toString().slice(0, 300),
       why: (items[i]?.why || "").toString().slice(0, 1000) || null,
-      page_url: c.page || null,
+      page_url: c.page || null, category: c.category,
       source_type: c.source_type, source_ref: c.source_ref,
       sort_order: order++,
     }));

@@ -94,7 +94,8 @@ function RecCard({ r, onExample, onApply, onIgnore, onDone, onAsk, busy }: {
 
 function PageGroup({ page, recs, children }: { page: string; recs: Recommendation[]; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
-  const label = page === "(ללא עמוד)" ? page : (page.replace(/^https?:\/\/[^/]+/, "") || page);
+  const decode = (u: string) => { try { return decodeURIComponent(u); } catch { return u; } };
+  const label = page === "(ללא עמוד)" ? page : decode(page.replace(/^https?:\/\/[^/]+/, "") || page);
   const pending = recs.filter((r) => r.status === "pending").length;
   return (
     <div className="card p-0 overflow-hidden">

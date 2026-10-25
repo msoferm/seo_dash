@@ -141,9 +141,9 @@ async function writeAndPublish(sb: any, clientId: number, keyword: string, opts:
   const auth = basicAuth(cw.username, cw.app_password);
   let featuredMedia: number | null = null;
   try {
-    // AI-generated image first (no API key needed), Pexels as fallback.
-    let img = await fetchAiImage(imagePrompt || `${keyword}, professional clean illustration`);
-    if (!img) img = await fetchPexels(imageQuery || keyword);
+    // Prefer REAL stock photos (Pexels); AI image only as a fallback when Pexels is unavailable.
+    let img = await fetchPexels(imageQuery || keyword);
+    if (!img) img = await fetchAiImage(imagePrompt || `${keyword}, realistic professional photograph`);
     if (img) featuredMedia = await uploadMedia(site, auth, img, imageAlt || title);
   } catch { /* image best-effort */ }
 

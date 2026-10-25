@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Upload, Loader2, FileSpreadsheet, Trash2, Check, FolderUp } from "lucide-react";
@@ -14,6 +14,9 @@ export default function DataUploadPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const [folder, setFolder] = useState<{ total: number; done: number; errors: string[] } | null>(null);
+  useEffect(() => {
+    if (folderRef.current) { folderRef.current.setAttribute("webkitdirectory", ""); folderRef.current.setAttribute("directory", ""); }
+  }, []);
 
   const { data: client } = useQuery({ queryKey: ["client", cid], queryFn: () => api.getClient(cid), enabled: !!cid });
   const { data: datasets, isLoading } = useQuery({ queryKey: ["datasets", cid], queryFn: () => api.listDatasets(cid), enabled: !!cid });
@@ -33,9 +36,13 @@ export default function DataUploadPage() {
   }
 
   async function handleFolder(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files || []).filter((f) => /\.(csv|tsv|txt)$/i.test(f.name));
+    const allFiles = Array.from(e.target.files || []);
+    const files = allFiles.filter((f) => /\.(csv|tsv|txt)$/i.test(f.name));
     if (folderRef.current) folderRef.current.value = "";
-    if (files.length === 0) { setFolder({ total: 0, done: 0, errors: ["לא נמצאו קבצי CSV/TSV/TXT בתיקייה"] }); return; }
+    if (files.length === 0) {
+      setFolder({ total: 0, done: 0, errors: [allFiles.length ? `נבחרו ${allFiles.length} קבצים אך אף אחד אינו CSV/TSV/TXT` : "לא נבחרה תיקייה / התיקייה ריקה"] });
+      return;
+    }
     const errors: string[] = [];
     setFolder({ total: files.length, done: 0, errors });
     for (const f of files) {
@@ -61,7 +68,7 @@ export default function DataUploadPage() {
           </label>
           <label className="btn-secondary cursor-pointer inline-flex">
             {folder && folder.done < folder.total ? <Loader2 size={18} className="animate-spin" /> : <FolderUp size={18} />} העלה תיקייה שלמה
-            <input ref={folderRef} type="file" className="hidden" onChange={handleFolder} {...{ webkitdirectory: "", directory: "" } as any} multiple />
+            <input ref={folderRef} type="file" className="hidden" onChange={handleFolder} multiple />
           </label>
         </div>
         {folder && (

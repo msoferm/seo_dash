@@ -16,6 +16,12 @@ function num(n: number | null | undefined): string {
   return (n ?? 0).toLocaleString("he-IL");
 }
 
+/** Display just the site name (no protocol / www / path) for a link in the report. */
+function siteName(url: string): string {
+  try { return new URL(url).hostname.replace(/^www\./, ""); }
+  catch { return (url || "").replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]; }
+}
+
 /** Ranking delta: lower is better, so improvement = initial - current. */
 function RankDelta({ initial, current }: { initial: number | null; current: number | null }) {
   if (initial == null || current == null) return <span className="text-slate-300">—</span>;
@@ -233,15 +239,13 @@ export default function ReportView() {
                 <tr className="bg-slate-50 text-slate-600">
                   <th className="text-right p-2 font-medium">סוג הקישור</th>
                   <th className="text-right p-2 font-medium">כתובת</th>
-                  <th className="p-2 font-medium">תאריך</th>
                 </tr>
               </thead>
               <tbody>
                 {(links || []).map((l) => (
                   <tr key={l.id} className="border-b border-slate-100">
                     <td className="text-right p-2 text-slate-800 whitespace-nowrap">{l.link_type}</td>
-                    <td className="text-right p-2"><a href={l.url} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline break-all">{l.url}</a></td>
-                    <td className="text-center p-2 text-slate-400 whitespace-nowrap">{l.done_on}</td>
+                    <td className="text-right p-2"><a href={l.url} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline">{siteName(l.url)}</a></td>
                   </tr>
                 ))}
               </tbody>

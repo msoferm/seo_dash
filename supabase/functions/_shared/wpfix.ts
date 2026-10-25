@@ -1,6 +1,6 @@
 /** Shared WordPress page-editing helpers (used by audit-fix and recommendation-apply). */
 import { callClaude, DEFAULT_MODEL, textOf, extractJson } from "./anthropic.ts";
-import { hasBridge, applyElementorFix } from "./bridge.ts";
+import { hasBridge, applyElementorFix, bridgeSetMeta } from "./bridge.ts";
 
 export function normalizeSite(u: string): string {
   let s = (u || "").trim().replace(/\/+$/, "");
@@ -86,10 +86,15 @@ export async function applyPageFix(cw: any, page: string, instruction: string): 
     method: "POST", headers: { Authorization: auth, "Content-Type": "application/json" }, body: JSON.stringify(update),
   });
   if (!up.ok) throw new Error(`WordPress דחה את העדכון (${up.status})`);
-  if (update.excerpt) {
-    try {
-      await fetch(`${site}/wp-json/wp/v2/${target.type}/${target.id}`, { method: "POST", headers: { Authorization: auth, "Content-Type": "application/json" }, body: JSON.stringify({ meta: { _yoast_wpseo_metadesc: update.excerpt, rank_math_description: update.excerpt } }) });
-    } catch { /* ignore */ }
+  if (update.excerpt || update.title) {
+    if (hasBridge(cw)) {
+      // Reliable: the bridge writes Yoast/RankMath meta via update_post_meta.
+      try { await bridgeSetMeta(cw, target.id, update.title || null, update.excerpt || null); } catch { /* best-effort */ }
+    } else if (update.excerpt) {
+      try {
+        await fetch(`${site}/wp-json/wp/v2/${target.type}/${target.id}`, { method: "POST", headers: { Authorization: auth, "Content-Type": "application/json" }, body: JSON.stringify({ meta: { _yoast_wpseo_metadesc: update.excerpt, rank_math_description: update.excerpt } }) });
+      } catch { /* ignore */ }
+    }
   }
 
   // Verify the change actually landed on the server.

@@ -1453,8 +1453,14 @@ export async function saveNavConfig(value: NavEntry[]): Promise<void> {
 // --- Report items (completed actions inside a report) ---
 export interface ReportItem {
   id: number; report_id: number; client_id: number;
-  title: string; why: string | null; page_url: string | null;
+  title: string; why: string | null; page_url: string | null; category: string | null; custom_group: string | null;
   source_type: string | null; source_ref: string | null; sort_order: number; created_at: string;
+}
+/** Merge several items under one custom heading (or pass null to un-merge). */
+export async function setReportItemsGroup(ids: number[], label: string | null): Promise<void> {
+  if (ids.length === 0) return;
+  const { error } = await supabase.from("report_items").update({ custom_group: label }).in("id", ids);
+  if (error) throw error;
 }
 export async function listReportItems(reportId: number): Promise<ReportItem[]> {
   const { data, error } = await supabase.from("report_items").select("*").eq("report_id", reportId).order("sort_order", { ascending: true });

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link2, Plus, Trash2, ClipboardPaste, ExternalLink, Tag, X } from "lucide-react";
+import { Link2, Plus, Trash2, ClipboardPaste, ExternalLink, Tag, X, ChevronDown } from "lucide-react";
 import * as api from "../api";
 import type { ReportLink } from "../api";
 import Spinner from "./Spinner";
@@ -31,6 +31,7 @@ function todayStr(): string {
 export default function ReportLinksManager({ clientId }: { clientId: number }) {
   const qc = useQueryClient();
   const [linkType, setLinkType] = useState("אינדקס עסקים");
+  const [typeOpen, setTypeOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [doneOn, setDoneOn] = useState(todayStr());
   const [notes, setNotes] = useState("");
@@ -132,18 +133,29 @@ export default function ReportLinksManager({ clientId }: { clientId: number }) {
 
       {/* Add one */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-2 mb-3">
-        <input
-          className="input md:col-span-3"
-          list="link-types"
-          placeholder="סוג קישור"
-          value={linkType}
-          onChange={(e) => setLinkType(e.target.value)}
-        />
-        <datalist id="link-types">
-          {typeOptions.map((t) => (
-            <option key={t} value={t} />
-          ))}
-        </datalist>
+        <div className="md:col-span-3 relative">
+          <input
+            className="input pl-8"
+            placeholder="סוג קישור"
+            value={linkType}
+            onChange={(e) => setLinkType(e.target.value)}
+            onFocus={() => setTypeOpen(true)}
+          />
+          <button type="button" className="absolute left-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700" onClick={() => setTypeOpen((o) => !o)} title="בחר מרשימה">
+            <ChevronDown size={16} />
+          </button>
+          {typeOpen && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setTypeOpen(false)} />
+              <div className="absolute z-20 mt-1 w-full max-h-52 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg">
+                {typeOptions.filter((o) => o.toLowerCase().includes(linkType.toLowerCase()) || !linkType).map((o) => (
+                  <button key={o} type="button" className="block w-full text-right px-3 py-1.5 text-sm hover:bg-brand-50" onMouseDown={() => { setLinkType(o); setTypeOpen(false); }}>{o}</button>
+                ))}
+                {typeOptions.length === 0 && <div className="px-3 py-2 text-xs text-slate-400">אין סוגים שמורים. הוסף ב"נהל סוגי קישור".</div>}
+              </div>
+            </>
+          )}
+        </div>
         <input
           className="input md:col-span-5"
           placeholder="https://..."
