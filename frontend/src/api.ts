@@ -967,6 +967,11 @@ export async function publishBlogNow(clientId: number): Promise<{ title: string;
   return await invokeFn("blog-publish", { client_id: clientId });
 }
 
+/** Generate a SAMPLE article draft (no publishing). Returns the title + a preview. */
+export async function sampleBlog(clientId: number, keyword?: string): Promise<{ title: string; keyword: string; preview?: string; image?: boolean }> {
+  return await invokeFn("blog-publish", { client_id: clientId, dry_run: true, keyword: keyword || undefined });
+}
+
 export async function listBlogPosts(clientId: number): Promise<BlogPost[]> {
   const { data, error } = await supabase.from("blog_posts").select("*").eq("client_id", clientId).order("created_at", { ascending: false }).limit(50);
   if (error) throw error;

@@ -84,6 +84,8 @@ export default function BlogPage() {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState<AssistantSeed | null>(null);
   const askContent = () => { setChatSeed({ title: "כתיבת תוכן לבלוג", nonce: Date.now(), context: `התייעצות על כתיבת תוכן/מאמרים לבלוג של ${client?.name || "הלקוח"} (${client?.domain || ""}). נושאים: רעיונות למאמרים, מבנה, טון, מילות מפתח, שיפור טיוטות.` }); setChatOpen(true); };
+  const [sampleKw, setSampleKw] = useState("");
+  const sample = useMutation({ mutationFn: () => api.sampleBlog(cid, sampleKw.trim() || undefined) });
   useEffect(() => { if (wp) setInstructions(wp.blog_instructions || ""); }, [wp]);
   const saveInstructions = useMutation({ mutationFn: () => api.updateWordpressSettings(cid, { blog_instructions: instructions }), onSuccess: () => qc.invalidateQueries({ queryKey: ["wp", cid] }) });
 
@@ -188,6 +190,26 @@ export default function BlogPage() {
               </button>
               {saveInstructions.isSuccess && <span className="text-sm text-emerald-600">נשמר ✓</span>}
             </div>
+          </div>
+
+          {/* Sample article (draft, no publishing) */}
+          <div className="card mb-6">
+            <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-1"><Newspaper size={18} className="text-brand-600" /> צור מאמר לדוגמה (טיוטה — לא מתפרסם)</h3>
+            <p className="text-xs text-slate-500 mb-2">קבל טיוטת מאמר לבדיקה לפני פרסום. אפשר להשאיר ריק (המערכת תבחר נושא) או לכתוב מילת מפתח.</p>
+            <div className="flex flex-wrap gap-2">
+              <input className="input flex-1 min-w-[220px]" placeholder="מילת מפתח (אופציונלי)" value={sampleKw} onChange={(e) => setSampleKw(e.target.value)} />
+              <button className="btn-primary shrink-0" onClick={() => sample.mutate()} disabled={sample.isPending}>
+                {sample.isPending ? <Loader2 size={18} className="animate-spin" /> : <Newspaper size={18} />} {sample.isPending ? "כותב טיוטה..." : "צור מאמר לדוגמה"}
+              </button>
+            </div>
+            {sample.isError && <div className="text-sm text-rose-600 mt-2">{(sample.error as any)?.message}</div>}
+            {sample.data && (
+              <div className="mt-3 border border-slate-200 rounded-lg p-3 bg-slate-50">
+                <div className="font-semibold text-slate-900">{sample.data.title}</div>
+                {sample.data.keyword && <div className="text-xs text-slate-400 mb-1">מילת מפתח: {sample.data.keyword}</div>}
+                <div className="text-sm text-slate-700 whitespace-pre-wrap">{sample.data.preview || "—"}</div>
+              </div>
+            )}
           </div>
 
           {/* Pending proposals */}

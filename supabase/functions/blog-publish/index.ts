@@ -5,15 +5,22 @@
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
-import { publishForClient } from "../_shared/blogger.ts";
+import { publishForClient, writeAndPublish } from "../_shared/blogger.ts";
 
 Deno.serve(async (req) => {
   const cors = handleCors(req);
   if (cors) return cors;
   try {
     const { sb } = await requireTeamMember(req);
-    const { client_id } = await req.json();
+    const { client_id, dry_run, keyword } = await req.json();
     if (!client_id) return errorResponse("חסר client_id", 400);
+    // dry_run → generate a sample draft WITHOUT publishing (returns { title, preview }).
+    if (dry_run) {
+      const result = keyword
+        ? await writeAndPublish(sb, client_id, keyword, { dryRun: true })
+        : await publishForClient(sb, client_id, { dryRun: true });
+      return jsonResponse(result);
+    }
     const result = await publishForClient(sb, client_id);
     return jsonResponse(result);
   } catch (e) {

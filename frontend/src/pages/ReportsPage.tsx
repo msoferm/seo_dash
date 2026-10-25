@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Plus, Trash2, Loader2, ArrowLeft, Sparkles, ListChecks, Image as ImageIcon } from "lucide-react";
+import { FileText, Plus, Trash2, Loader2, ArrowLeft, Sparkles, ListChecks, Image as ImageIcon, ClipboardCheck, ExternalLink, ChevronDown, ChevronUp } from "lucide-react";
 import * as api from "../api";
 import type { Report } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -49,6 +49,20 @@ export default function ReportsPage() {
     queryFn: () => api.listReports(cid),
     enabled: !!cid,
   });
+  const { data: activity } = useQuery({ queryKey: ["activity", cid], queryFn: () => api.getActivityLog(cid), enabled: !!cid });
+  const [actOpen, setActOpen] = useState(true);
+  const catForArea = (area: string): string =>
+    /קישור/.test(area) ? "קישורים"
+      : /טכני|מהירות|אודיט/.test(area) ? "אופטימיזציה טכנית ותיקונים"
+      : /המרו|UX/.test(area) ? "המרות ו-UX"
+      : /תוכן|מילות|ביצועים/.test(area) ? "תוכן באתר"
+      : "אחר";
+  const actGroups = (() => {
+    const order = ["קישורים", "תוכן באתר", "אופטימיזציה טכנית ותיקונים", "המרות ו-UX", "אחר"];
+    const m = new Map<string, typeof activity>();
+    for (const e of activity || []) { const c = catForArea(e.area); if (!m.has(c)) m.set(c, [] as any); (m.get(c) as any).push(e); }
+    return [...m.entries()].sort((a, b) => (order.indexOf(a[0]) + 1 || 99) - (order.indexOf(b[0]) + 1 || 99));
+  })();
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["reports", cid] });
 
@@ -155,6 +169,39 @@ export default function ReportsPage() {
           {create.isError && <div className="text-sm text-rose-600 mt-2">שגיאה: {(create.error as any)?.message}</div>}
         </div>
       )}
+
+      {/* Completed actions preview (before/independent of a report) */}
+      <div className="card mb-6">
+        <button className="w-full flex items-center justify-between gap-2 text-right" onClick={() => setActOpen((o) => !o)}>
+          <h3 className="font-semibold flex items-center gap-2 text-slate-800"><ClipboardCheck size={18} className="text-brand-600" /> פעולות שבוצעו <span className="text-xs font-normal text-slate-400">({(activity || []).length}) — סקירה לפני יצירת דוח</span></h3>
+          {actOpen ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
+        </button>
+        {actOpen && (
+          (activity || []).length === 0 ? (
+            <p className="text-slate-400 text-sm mt-2">עדיין לא בוצעו פעולות. ברגע שתסמן "בוצע" או "בצע" במערכת — הן יופיעו כאן אוטומטית.</p>
+          ) : (
+            <div className="space-y-4 mt-3">
+              {actGroups.map(([c, items]) => (
+                <div key={c}>
+                  <h4 className="text-sm font-bold text-blue-700 bg-blue-50 rounded-md px-3 py-1.5 mb-1 border-r-4 border-blue-400">{c} <span className="font-normal text-blue-400">({(items as any).length})</span></h4>
+                  <ul className="divide-y divide-slate-100">
+                    {(items as any).map((e: any) => (
+                      <li key={e.id} className="py-2">
+                        <div className="font-medium text-slate-900 text-sm">{e.title}</div>
+                        <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                          {e.date && <span className="text-xs text-slate-400">{new Date(e.date).toLocaleDateString("he-IL")}</span>}
+                          {e.page && <a href={e.page} target="_blank" rel="noreferrer" className="text-xs text-brand-600 hover:underline inline-flex items-center gap-0.5"><ExternalLink size={11} /> למעבר לדף</a>}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+              <p className="text-xs text-slate-400">הפעולות נכנסות אוטומטית לדוח האחרון. לעריכה/איחוד/שיפור הסבר — פתח את הדוח.</p>
+            </div>
+          )
+        )}
+      </div>
 
       {/* Saved reports */}
       <div className="card mb-6">
