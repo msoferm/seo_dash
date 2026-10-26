@@ -30,7 +30,7 @@ function todayStr(): string {
  */
 export default function ReportLinksManager({ clientId }: { clientId: number }) {
   const qc = useQueryClient();
-  const [linkType, setLinkType] = useState("אינדקס עסקים");
+  const [linkType, setLinkType] = useState("");
   const [typeOpen, setTypeOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [doneOn, setDoneOn] = useState(todayStr());
@@ -148,9 +148,15 @@ export default function ReportLinksManager({ clientId }: { clientId: number }) {
             <>
               <div className="fixed inset-0 z-10" onClick={() => setTypeOpen(false)} />
               <div className="absolute z-20 mt-1 w-full max-h-52 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg">
-                {typeOptions.filter((o) => o.toLowerCase().includes(linkType.toLowerCase()) || !linkType).map((o) => (
-                  <button key={o} type="button" className="block w-full text-right px-3 py-1.5 text-sm hover:bg-brand-50" onMouseDown={() => { setLinkType(o); setTypeOpen(false); }}>{o}</button>
-                ))}
+                {typeOptions.filter((o) => o.toLowerCase().includes(linkType.toLowerCase()) || !linkType).map((o) => {
+                  const preset = (presets || []).find((pr) => pr.name === o);
+                  return (
+                    <div key={o} className="flex items-center justify-between hover:bg-brand-50">
+                      <button type="button" className="flex-1 text-right px-3 py-1.5 text-sm" onMouseDown={() => { setLinkType(o); setTypeOpen(false); }}>{o}</button>
+                      {preset && <button type="button" className="text-slate-300 hover:text-rose-600 px-2" title="מחק סוג" onMouseDown={(e) => { e.preventDefault(); delType.mutate(preset.id); }}><X size={13} /></button>}
+                    </div>
+                  );
+                })}
                 {typeOptions.length === 0 && <div className="px-3 py-2 text-xs text-slate-400">אין סוגים שמורים. הוסף ב"נהל סוגי קישור".</div>}
               </div>
             </>

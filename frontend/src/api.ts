@@ -694,7 +694,9 @@ export async function applyRecommendation(recId: number, modification?: string):
   return await invokeFn("recommendation-apply", { rec_id: recId, modification: modification || undefined });
 }
 export async function setRecommendationStatus(recId: number, status: RecStatus): Promise<void> {
-  const { error } = await supabase.from("recommendations").update({ status }).eq("id", recId);
+  const patch: any = { status };
+  if (status === "done" || status === "applied") patch.applied_at = new Date().toISOString();
+  const { error } = await supabase.from("recommendations").update(patch).eq("id", recId);
   if (error) throw error;
 }
 
@@ -748,7 +750,7 @@ export async function listCrawledPages(clientId: number): Promise<CrawledPage[]>
 
 // ===== Impact tracking (computed from GSC history) =====
 export interface ImpactRow {
-  rec_id: number; page: string | null; title: string; applied_note: string | null; applied_at: string;
+  rec_id: string; kind?: string; page: string | null; title: string; applied_note: string | null; applied_at: string;
   clicks_before: number; clicks_now: number; impressions_before: number; impressions_now: number;
 }
 export async function getImpactStats(clientId: number): Promise<ImpactRow[]> {
@@ -786,11 +788,11 @@ export async function getActivityLog(clientId: number): Promise<ActivityEntry[]>
     getImpactStats(clientId).catch(() => [] as ImpactRow[]),
   ]);
   if (recsR.error) throw recsR.error;
-  const impByRec = new Map<number, ImpactRow>((impact || []).map((r) => [r.rec_id, r]));
+  const impByRec = new Map<string, ImpactRow>((impact || []).map((r) => [r.rec_id, r]));
   const out: ActivityEntry[] = [];
 
   for (const r of recsR.data || []) {
-    const im = impByRec.get(r.id);
+    const im = impByRec.get(String(r.id));
     out.push({
       id: `rec:${r.id}`, date: r.applied_at, area: REC_AREA[r.type] || "תוכן", title: r.title, page: r.page, note: r.applied_note,
       kind: "recommendation",
@@ -944,12 +946,18 @@ export async function proposeBlog(clientId: number): Promise<{ keyword: string; 
 }
 
 /** Semi-auto step 2: approve a proposal → write & publish it. */
-export async function approveBlogProposal(proposalId: number): Promise<{ title: string; url: string; status: string; keyword: string }> {
-  return await invokeFn("blog-approve", { proposal_id: proposalId });
+export async function approveBlogProposal(proposalId: number, modification?: string): Promise<{ title: string; url: string; status: string; keyword: string }> {
+  return await invokeFn("blog-approve", { proposal_id: proposalId, modification: modification || undefined });
 }
 
 export async function rejectBlogProposal(id: number): Promise<void> {
   const { error } = await supabase.from("blog_posts").update({ status: "rejected" }).eq("id", id);
+  if (error) throw error;
+}
+
+/** Mark a blog proposal as done manually (handled outside the system). */
+export async function setBlogPostDone(id: number): Promise<void> {
+  const { error } = await supabase.from("blog_posts").update({ status: "done" }).eq("id", id);
   if (error) throw error;
 }
 

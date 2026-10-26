@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Newspaper, Loader2, Plug, Check, ExternalLink, Trash2, Send, CalendarClock, AlertTriangle, GraduationCap, Save, Lightbulb, X } from "lucide-react";
+import { Newspaper, Loader2, Plug, Check, ExternalLink, Trash2, Send, CalendarClock, AlertTriangle, Save, Lightbulb, X, Pencil, MessageCircle } from "lucide-react";
 import * as api from "../api";
 import type { BlogPost } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -57,9 +57,77 @@ function ConnectForm({ clientId, onDone }: { clientId: number; onDone: () => voi
 }
 
 const STATUS_BADGE: Record<string, string> = {
-  publish: "bg-emerald-50 text-emerald-700", draft: "bg-amber-50 text-amber-700", error: "bg-rose-50 text-rose-700",
+  publish: "bg-emerald-50 text-emerald-700", draft: "bg-amber-50 text-amber-700", error: "bg-rose-50 text-rose-700", done: "bg-emerald-50 text-emerald-700",
 };
-const STATUS_LABEL: Record<string, string> = { publish: "פורסם", draft: "טיוטה", error: "שגיאה" };
+const STATUS_LABEL: Record<string, string> = { publish: "פורסם", draft: "טיוטה", error: "שגיאה", done: "בוצע" };
+
+function ProposalCard({ cid, p, client }: { cid: number; p: BlogPost; client?: { name?: string; domain?: string } | null }) {
+  const qc = useQueryClient();
+  const invalidate = () => { qc.invalidateQueries({ queryKey: ["wp", cid] }); qc.invalidateQueries({ queryKey: ["blog-posts", cid] }); };
+  const [modOpen, setModOpen] = useState(false);
+  const [modText, setModText] = useState("");
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatSeed, setChatSeed] = useState<AssistantSeed | null>(null);
+
+  const approve = useMutation({ mutationFn: (mod?: string) => api.approveBlogProposal(p.id, mod), onSuccess: invalidate });
+  const reject = useMutation({ mutationFn: () => api.rejectBlogProposal(p.id), onSuccess: invalidate });
+  const markDone = useMutation({ mutationFn: () => api.setBlogPostDone(p.id), onSuccess: invalidate });
+  const sample = useMutation({ mutationFn: () => api.sampleBlog(cid, p.keyword || undefined) });
+
+  const ask = () => {
+    setChatSeed({ title: "התייעצות על הצעת מאמר", nonce: Date.now(), context: `התייעצות על הצעת מאמר לבלוג של ${client?.name || "הלקוח"} (${client?.domain || ""}).\nכותרת מוצעת: ${p.title}\nמילת מפתח: ${p.keyword || "—"}\nנימוק: ${p.reason || "—"}` });
+    setChatOpen(true);
+  };
+
+  return (
+    <li className="border border-slate-200 rounded-lg p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-medium text-slate-900">{p.title}</div>
+          {p.keyword && <div className="text-xs text-slate-400">מילת מפתח: {p.keyword}</div>}
+        </div>
+        <span className="text-xs text-slate-400 shrink-0 flex items-center gap-1"><CalendarClock size={12} /> {new Date(p.created_at).toLocaleString("he-IL")}</span>
+      </div>
+      {p.reason && <div className="text-sm text-slate-600 whitespace-pre-wrap mt-1">{p.reason}</div>}
+
+      <div className="flex flex-wrap items-center gap-2 mt-3">
+        <button className="btn-secondary text-sm py-1.5" onClick={() => sample.mutate()} disabled={sample.isPending}>
+          {sample.isPending ? <Loader2 size={15} className="animate-spin" /> : <Newspaper size={15} />} צור דוגמה
+        </button>
+        <button className="btn-primary text-sm py-1.5" onClick={() => approve.mutate(undefined)} disabled={approve.isPending}>
+          {approve.isPending ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} {approve.isPending ? "כותב ומפרסם..." : "בצע (כתוב ופרסם)"}
+        </button>
+        <button className="btn-secondary text-sm py-1.5" onClick={() => setModOpen((o) => !o)}><Pencil size={15} /> בצע עם שינוי</button>
+        <button className="text-sm py-1.5 px-3 rounded-lg text-emerald-700 hover:bg-emerald-50 inline-flex items-center gap-1" onClick={() => markDone.mutate()} disabled={markDone.isPending}>
+          {markDone.isPending ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} בוצע
+        </button>
+        <button className="text-sm py-1.5 px-3 rounded-lg text-brand-600 hover:bg-brand-50 inline-flex items-center gap-1" onClick={ask}><MessageCircle size={15} /> שאל</button>
+        <button className="text-sm py-1.5 px-3 rounded-lg text-slate-500 hover:bg-slate-100 inline-flex items-center gap-1" onClick={() => reject.mutate()} disabled={reject.isPending}><X size={15} /> התעלם</button>
+      </div>
+
+      {modOpen && (
+        <div className="mt-2">
+          <textarea className="input" rows={2} placeholder="מה לשנות/להוסיף בכתיבה (למשל: טון שיווקי יותר, הוסף קריאה לפעולה, התמקד באזור X)" value={modText} onChange={(e) => setModText(e.target.value)} />
+          <button className="btn-primary text-sm py-1.5 mt-2" onClick={() => approve.mutate(modText.trim() || undefined)} disabled={approve.isPending || !modText.trim()}>
+            {approve.isPending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} כתוב עם השינוי
+          </button>
+        </div>
+      )}
+
+      {sample.isError && <div className="text-sm text-rose-600 mt-2">{(sample.error as any)?.message}</div>}
+      {sample.data && (
+        <div className="mt-3 border border-slate-200 rounded-lg p-3 bg-slate-50">
+          <div className="font-semibold text-slate-900">{sample.data.title}</div>
+          {sample.data.keyword && <div className="text-xs text-slate-400 mb-1">מילת מפתח: {sample.data.keyword}</div>}
+          <div className="text-sm text-slate-700 whitespace-pre-wrap">{sample.data.preview || "—"}</div>
+        </div>
+      )}
+      {approve.isError && <div className="text-sm text-rose-600 mt-2">{(approve.error as any)?.message}</div>}
+
+      <TaskAssistant cid={cid} open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} />
+    </li>
+  );
+}
 
 export default function BlogPage() {
   const { clientId } = useParams();
@@ -76,18 +144,11 @@ export default function BlogPage() {
   const disconnect = useMutation({ mutationFn: () => api.disconnectWordpress(cid), onSuccess: invalidate });
   const publishNow = useMutation({ mutationFn: () => api.publishBlogNow(cid), onSuccess: invalidate });
   const propose = useMutation({ mutationFn: () => api.proposeBlog(cid), onSuccess: invalidate });
-  const approve = useMutation({ mutationFn: (id: number) => api.approveBlogProposal(id), onSuccess: invalidate });
-  const reject = useMutation({ mutationFn: (id: number) => api.rejectBlogProposal(id), onSuccess: invalidate });
 
-  const [instructions, setInstructions] = useState("");
   const [bridgeSecret, setBridgeSecret] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState<AssistantSeed | null>(null);
   const askContent = () => { setChatSeed({ title: "כתיבת תוכן לבלוג", nonce: Date.now(), context: `התייעצות על כתיבת תוכן/מאמרים לבלוג של ${client?.name || "הלקוח"} (${client?.domain || ""}). נושאים: רעיונות למאמרים, מבנה, טון, מילות מפתח, שיפור טיוטות.` }); setChatOpen(true); };
-  const [sampleKw, setSampleKw] = useState("");
-  const sample = useMutation({ mutationFn: () => api.sampleBlog(cid, sampleKw.trim() || undefined) });
-  useEffect(() => { if (wp) setInstructions(wp.blog_instructions || ""); }, [wp]);
-  const saveInstructions = useMutation({ mutationFn: () => api.updateWordpressSettings(cid, { blog_instructions: instructions }), onSuccess: () => qc.invalidateQueries({ queryKey: ["wp", cid] }) });
 
   return (
     <div>
@@ -179,71 +240,26 @@ export default function BlogPage() {
             </div>
           </div>
 
-          {/* Instructions / continuous improvement */}
-          <div className="card mb-6">
-            <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-1"><GraduationCap size={18} className="text-brand-600" /> הנחיות לסוכן (תהליך שיפור מתמיד)</h3>
-            <p className="text-xs text-slate-500 mb-2">כתוב מה חשוב לדעת על הלקוח, על מה לכתוב ומה לתקן — הסוכן מכבד זאת בכל מאמר. לדוגמה: "העסק מתמחה ב-X ומשרת אזור Y", "טון מקצועי אך נגיש", "תמיד להוסיף קריאה לפעולה לפנייה", "אל תכתוב על נושא Z".</p>
-            <textarea className="input" rows={4} value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="הנחיות לסוכן..." />
-            <div className="flex items-center gap-2 mt-2">
-              <button className="btn-primary text-sm py-1.5" onClick={() => saveInstructions.mutate()} disabled={saveInstructions.isPending}>
-                {saveInstructions.isPending ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} שמור הנחיות
-              </button>
-              {saveInstructions.isSuccess && <span className="text-sm text-emerald-600">נשמר ✓</span>}
-            </div>
-          </div>
-
-          {/* Sample article (draft, no publishing) */}
-          <div className="card mb-6">
-            <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-1"><Newspaper size={18} className="text-brand-600" /> צור מאמר לדוגמה (טיוטה — לא מתפרסם)</h3>
-            <p className="text-xs text-slate-500 mb-2">קבל טיוטת מאמר לבדיקה לפני פרסום. אפשר להשאיר ריק (המערכת תבחר נושא) או לכתוב מילת מפתח.</p>
-            <div className="flex flex-wrap gap-2">
-              <input className="input flex-1 min-w-[220px]" placeholder="מילת מפתח (אופציונלי)" value={sampleKw} onChange={(e) => setSampleKw(e.target.value)} />
-              <button className="btn-primary shrink-0" onClick={() => sample.mutate()} disabled={sample.isPending}>
-                {sample.isPending ? <Loader2 size={18} className="animate-spin" /> : <Newspaper size={18} />} {sample.isPending ? "כותב טיוטה..." : "צור מאמר לדוגמה"}
-              </button>
-            </div>
-            {sample.isError && <div className="text-sm text-rose-600 mt-2">{(sample.error as any)?.message}</div>}
-            {sample.data && (
-              <div className="mt-3 border border-slate-200 rounded-lg p-3 bg-slate-50">
-                <div className="font-semibold text-slate-900">{sample.data.title}</div>
-                {sample.data.keyword && <div className="text-xs text-slate-400 mb-1">מילת מפתח: {sample.data.keyword}</div>}
-                <div className="text-sm text-slate-700 whitespace-pre-wrap">{sample.data.preview || "—"}</div>
-              </div>
-            )}
-          </div>
-
           {/* Pending proposals */}
           {(posts || []).some((p) => p.status === "proposed") && (
             <div className="card mb-6 border-r-4 border-r-brand-400">
               <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-3"><Lightbulb size={18} className="text-brand-600" /> הצעות ממתינות לאישור</h3>
               <ul className="space-y-3">
                 {(posts || []).filter((p) => p.status === "proposed").map((p: BlogPost) => (
-                  <li key={p.id} className="border border-slate-200 rounded-lg p-3">
-                    <div className="font-medium text-slate-900">{p.title}</div>
-                    {p.keyword && <div className="text-xs text-slate-400 mb-1">מילת מפתח: {p.keyword}</div>}
-                    {p.reason && <div className="text-sm text-slate-600 whitespace-pre-wrap">{p.reason}</div>}
-                    <div className="flex items-center gap-2 mt-3">
-                      <button className="btn-primary text-sm py-1.5" onClick={() => approve.mutate(p.id)} disabled={approve.isPending}>
-                        {approve.isPending && approve.variables === p.id ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
-                        {approve.isPending && approve.variables === p.id ? "כותב ומפרסם..." : "אשר וכתוב"}
-                      </button>
-                      <button className="text-sm py-1.5 px-3 rounded-lg text-rose-600 hover:bg-rose-50" onClick={() => reject.mutate(p.id)}><X size={15} /> דחה</button>
-                    </div>
-                  </li>
+                  <ProposalCard key={p.id} cid={cid} p={p} client={client} />
                 ))}
               </ul>
-              {approve.isError && <div className="mt-3 text-sm text-rose-600">{(approve.error as any)?.message}</div>}
             </div>
           )}
 
           {/* History */}
           <div className="card">
             <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-3"><Newspaper size={18} /> היסטוריית מאמרים</h3>
-            {!posts || posts.filter((p) => ["publish", "draft", "error"].includes(p.status || "")).length === 0 ? (
+            {!posts || posts.filter((p) => ["publish", "draft", "error", "done"].includes(p.status || "")).length === 0 ? (
               <p className="text-slate-400 text-sm">עדיין לא פורסמו מאמרים. {wp.require_approval ? 'לחץ "הצע נושא" לקבלת הצעה' : 'לחץ "כתוב ופרסם עכשיו"'} או המתן לריצה השבועית.</p>
             ) : (
               <ul className="divide-y divide-slate-100">
-                {posts.filter((p) => ["publish", "draft", "error"].includes(p.status || "")).map((p: BlogPost) => (
+                {posts.filter((p) => ["publish", "draft", "error", "done"].includes(p.status || "")).map((p: BlogPost) => (
                   <li key={p.id} className="py-3 flex items-start gap-3">
                     <span className={`badge ${STATUS_BADGE[p.status || ""] || "bg-slate-100 text-slate-600"} shrink-0 mt-0.5`}>{STATUS_LABEL[p.status || ""] || p.status}</span>
                     <div className="flex-1 min-w-0">

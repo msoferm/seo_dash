@@ -95,7 +95,7 @@ export async function proposeForClient(sb: any, clientId: number): Promise<Propo
 }
 
 // ---------- write + publish a specific keyword ----------
-async function writeAndPublish(sb: any, clientId: number, keyword: string, opts: { proposalId?: number; dryRun?: boolean } = {}): Promise<PublishResult> {
+async function writeAndPublish(sb: any, clientId: number, keyword: string, opts: { proposalId?: number; dryRun?: boolean; modification?: string } = {}): Promise<PublishResult> {
   const { data: client } = await sb.from("clients").select("*").eq("id", clientId).maybeSingle();
   if (!client) throw new Error("לקוח לא נמצא");
   const { data: cw } = await sb.from("client_wordpress").select("*").eq("client_id", clientId).maybeSingle();
@@ -112,6 +112,7 @@ async function writeAndPublish(sb: any, clientId: number, keyword: string, opts:
     "אתה כותב תוכן SEO מקצועי בעברית לבלוג עסקי. כתוב מאמר איכותי, מקורי ומועיל סביב מילת המפתח — כותרת ממוקדת-SEO, מבנה H2/H3, פסקאות ורשימות. 600-900 מילים. " +
     "שלב את מילת המפתח באופן טבעי ושזור מונחים קשורים מהרשימה שסופקה. אל תמציא עובדות/מספרים/מחירים שאינך יכול לאמת. " +
     (instructions ? `הנחיות חובה של הצוות (כבד תמיד): ${instructions}\n` : "") +
+    (opts.modification && opts.modification.trim() ? `שינוי/הנחיה נוספת לכתיבה הספציפית הזו (חובה לכבד): ${opts.modification.trim()}\n` : "") +
     "אם התבקשת לשים קישור פנימי לעמוד מסוים — השתמש בכתובת ה-URL המדויקת שסופקה ועגן אותו על טקסט העוגן הרלוונטי (למשל על הביטוי 'כתב כמויות'), ולא על עמוד הבית ולא על טקסט כללי. " +
     "החזר בפורמט המדויק (בלי טקסט נוסף):\n" +
     "TITLE: <כותרת SEO, עד 60 תווים, כוללת את מילת המפתח>\n" +
@@ -182,11 +183,11 @@ export async function publishForClient(sb: any, clientId: number, opts: { dryRun
 }
 
 // ---------- approve a proposal → write + publish ----------
-export async function approveProposal(sb: any, proposalId: number): Promise<PublishResult> {
+export async function approveProposal(sb: any, proposalId: number, modification?: string): Promise<PublishResult> {
   const { data: p } = await sb.from("blog_posts").select("*").eq("id", proposalId).maybeSingle();
   if (!p) throw new Error("ההצעה לא נמצאה");
   if (p.status !== "proposed") throw new Error("ההצעה כבר טופלה");
-  return await writeAndPublish(sb, p.client_id, p.keyword, { proposalId });
+  return await writeAndPublish(sb, p.client_id, p.keyword, { proposalId, modification });
 }
 
 /** Generate a featured image with AI (Pollinations — free, no API key). */

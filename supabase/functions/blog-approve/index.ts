@@ -10,9 +10,9 @@ Deno.serve(async (req) => {
   if (cors) return cors;
   try {
     const { sb } = await requireTeamMember(req);
-    const { proposal_id } = await req.json();
+    const { proposal_id, modification } = await req.json();
     if (!proposal_id) return errorResponse("חסר proposal_id", 400);
-    const result = await approveProposal(sb, proposal_id);
+    const result = await approveProposal(sb, proposal_id, modification);
     return jsonResponse(result);
   } catch (e) {
     return errorResponse((e as Error).message, 500);

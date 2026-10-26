@@ -27,7 +27,7 @@ export const CLIENT_NAV: NavItemDef[] = [
 
 export const CLIENT_NAV_BY_KEY: Record<string, NavItemDef> = Object.fromEntries(CLIENT_NAV.map((i) => [i.key, i]));
 
-export type NavEntry = { t: "h"; id: string; label: string } | { t: "i"; key: string; label?: string };
+export type NavEntry = { t: "h"; id: string; label: string; collapsible?: boolean } | { t: "i"; key: string; label?: string };
 
 /** Merge a saved layout with the canonical list: drop stale keys, append any new tabs. */
 export function resolveNav(config: NavEntry[] | null | undefined): NavEntry[] {

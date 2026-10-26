@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { X, Save, Loader2, ChevronUp, ChevronDown, Plus, Trash2, Heading, RotateCcw } from "lucide-react";
+import { X, Save, Loader2, ChevronUp, ChevronDown, Plus, Trash2, Heading, RotateCcw, GripVertical, ChevronsDownUp } from "lucide-react";
 import * as api from "./api";
 import { CLIENT_NAV_BY_KEY, resolveNav } from "./navItems";
 import type { NavEntry } from "./navItems";
@@ -8,6 +8,8 @@ import type { NavEntry } from "./navItems";
 export default function NavEditor({ config, onClose }: { config: NavEntry[] | null; onClose: () => void }) {
   const qc = useQueryClient();
   const [list, setList] = useState<NavEntry[]>([]);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
   useEffect(() => { setList(resolveNav(config)); }, [config]);
 
   const save = useMutation({
@@ -23,7 +25,12 @@ export default function NavEditor({ config, onClose }: { config: NavEntry[] | nu
     const j = i + d; if (j < 0 || j >= list.length) return;
     const next = [...list]; [next[i], next[j]] = [next[j], next[i]]; setList(next);
   };
+  const reorder = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return;
+    const next = [...list]; const [moved] = next.splice(from, 1); next.splice(to, 0, moved); setList(next);
+  };
   const setLabel = (i: number, label: string) => { const next = [...list]; next[i] = { ...next[i], label } as NavEntry; setList(next); };
+  const toggleCollapsible = (i: number) => { const next = [...list]; const h = next[i]; if (h.t === "h") { next[i] = { ...h, collapsible: !h.collapsible }; setList(next); } };
   const removeAt = (i: number) => setList(list.filter((_, idx) => idx !== i));
   const addHeading = () => setList([{ t: "h", id: `h${Date.now()}`, label: "כותרת חדשה" }, ...list]);
 
@@ -34,11 +41,20 @@ export default function NavEditor({ config, onClose }: { config: NavEntry[] | nu
           <h3 className="font-bold text-slate-900">עריכת תפריט</h3>
           <button className="text-slate-400 hover:text-slate-700 p-1" onClick={onClose}><X size={20} /></button>
         </div>
-        <div className="px-5 py-2 text-xs text-slate-500">שנה שמות, גרור למעלה/למטה לסידור, והוסף כותרות כדי לקבץ לשוניות קשורות.</div>
+        <div className="px-5 py-2 text-xs text-slate-500">גרור פריטים עם העכבר (או בחצים) כדי לסדר. הוסף כותרות לקיבוץ לשוניות, וסמן כותרת כ"תפריט נפתח" כדי שהלשוניות תחתיה ייפתחו/ייסגרו בלחיצה.</div>
 
         <div className="flex-1 overflow-y-auto px-5 py-2 space-y-1">
           {list.map((e, i) => (
-            <div key={i} className={`flex items-center gap-2 rounded-lg p-1.5 ${e.t === "h" ? "bg-slate-100" : "bg-white border border-slate-100"}`}>
+            <div
+              key={i}
+              draggable
+              onDragStart={() => setDragIndex(i)}
+              onDragOver={(ev) => { ev.preventDefault(); if (overIndex !== i) setOverIndex(i); }}
+              onDrop={(ev) => { ev.preventDefault(); if (dragIndex !== null) reorder(dragIndex, i); setDragIndex(null); setOverIndex(null); }}
+              onDragEnd={() => { setDragIndex(null); setOverIndex(null); }}
+              className={`flex items-center gap-2 rounded-lg p-1.5 ${e.t === "h" ? "bg-slate-100" : "bg-white border border-slate-100"} ${dragIndex === i ? "opacity-40" : ""} ${overIndex === i && dragIndex !== null && dragIndex !== i ? "ring-2 ring-brand-400" : ""}`}
+            >
+              <GripVertical size={15} className="text-slate-300 shrink-0 cursor-grab active:cursor-grabbing" />
               <div className="flex flex-col">
                 <button className="text-slate-400 hover:text-slate-700 disabled:opacity-30" disabled={i === 0} onClick={() => move(i, -1)}><ChevronUp size={14} /></button>
                 <button className="text-slate-400 hover:text-slate-700 disabled:opacity-30" disabled={i === list.length - 1} onClick={() => move(i, 1)}><ChevronDown size={14} /></button>
@@ -47,6 +63,11 @@ export default function NavEditor({ config, onClose }: { config: NavEntry[] | nu
                 <>
                   <Heading size={14} className="text-slate-400 shrink-0" />
                   <input className="input py-1 text-sm flex-1 font-semibold" value={e.label} onChange={(ev) => setLabel(i, ev.target.value)} placeholder="כותרת קבוצה" />
+                  <button
+                    className={`p-1 shrink-0 rounded ${e.collapsible ? "text-brand-600 bg-brand-50" : "text-slate-400 hover:text-slate-700"}`}
+                    title={e.collapsible ? "תפריט נפתח (לחץ כדי להפוך לתפריט פתוח קבוע)" : "הפוך לתפריט נפתח (הלשוניות תחתיו ייפתחו/ייסגרו בלחיצה)"}
+                    onClick={() => toggleCollapsible(i)}
+                  ><ChevronsDownUp size={15} /></button>
                   <button className="text-slate-400 hover:text-rose-600 p-1 shrink-0" title="מחק כותרת" onClick={() => removeAt(i)}><Trash2 size={15} /></button>
                 </>
               ) : (() => {

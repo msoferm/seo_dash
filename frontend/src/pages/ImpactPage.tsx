@@ -74,7 +74,10 @@ export default function ImpactPage() {
                 {list.map((r: ImpactRow) => (
                   <tr key={r.rec_id} className="border-b border-slate-100 align-top">
                     <td className="text-right p-2">
-                      <div className="font-medium text-slate-900">{r.title}</div>
+                      <div className="font-medium text-slate-900 flex items-center gap-1.5">
+                        <span className="badge bg-slate-100 text-slate-500 shrink-0">{r.kind === "audit" ? "אודיט" : r.kind === "task" ? "משימה" : "המלצה"}</span>
+                        {r.title}
+                      </div>
                       {r.applied_note && <div className="text-xs text-slate-400">{r.applied_note}</div>}
                     </td>
                     <td className="text-right p-2">{r.page ? <a href={r.page} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline inline-flex items-center gap-1 text-xs break-all"><ExternalLink size={11} className="shrink-0" />{r.page.replace(/^https?:\/\/[^/]+/, "") || r.page}</a> : <span className="text-slate-400 text-xs">—</span>}</td>
