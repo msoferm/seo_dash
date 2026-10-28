@@ -12,12 +12,12 @@ Deno.serve(async (req) => {
   if (cors) return cors;
   try {
     const { sb } = await requireTeamMember(req);
-    const { client_id, dry_run, keyword } = await req.json();
+    const { client_id, dry_run, keyword, sources, modification } = await req.json();
     if (!client_id) return errorResponse("חסר client_id", 400);
     // dry_run → generate a sample draft WITHOUT publishing (returns { title, preview }).
     if (dry_run) {
       const result = keyword
-        ? await writeAndPublish(sb, client_id, keyword, { dryRun: true })
+        ? await writeAndPublish(sb, client_id, keyword, { dryRun: true, sources, modification })
         : await publishForClient(sb, client_id, { dryRun: true });
       return jsonResponse(result);
     }

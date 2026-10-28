@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Stethoscope, FileText, Loader2, Copy, Check, Wrench, X, Pencil, RotateCcw, ShieldCheck, Target, Plus, CheckCheck, MessageCircle } from "lucide-react";
+import { Stethoscope, FileText, Loader2, Copy, Check, Wrench, X, Pencil, RotateCcw, ShieldCheck, Target, Plus, CheckCheck, MessageCircle, CheckCircle2 } from "lucide-react";
 import * as api from "../api";
 import type { AuditIssueRow, AuditSeverity, EeatResult } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -63,6 +63,12 @@ export default function SeoToolsPage() {
   const sorted = (issues || []).slice().sort((a, b) =>
     (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1) || SEV_ORDER[a.severity] - SEV_ORDER[b.severity]);
   const pendingCount = (issues || []).filter((i) => i.status === "pending").length;
+  // Group issues by the page they belong to (pages with pending issues surface first, via `sorted`).
+  const pageGroups: [string, AuditIssueRow[]][] = (() => {
+    const m = new Map<string, AuditIssueRow[]>();
+    for (const i of sorted) { const k = i.page || "—"; if (!m.has(k)) m.set(k, []); m.get(k)!.push(i); }
+    return [...m.entries()];
+  })();
 
   return (
     <div>
@@ -88,58 +94,66 @@ export default function SeoToolsPage() {
         {(issues || []).length === 0 ? (
           <p className="text-slate-400 text-sm">{audit.isSuccess ? "לא נמצאו בעיות מהותיות." : 'לחץ "הרץ אודיט" כדי לבדוק את האתר.'}</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm border-collapse min-w-[820px]">
-              <thead>
-                <tr className="bg-slate-50 text-slate-600">
-                  <th className="p-2 font-medium">חומרה</th>
-                  <th className="text-right p-2 font-medium">עמוד</th>
-                  <th className="text-right p-2 font-medium">בעיה</th>
-                  <th className="text-right p-2 font-medium">תיקון</th>
-                  <th className="p-2 font-medium min-w-[240px]">פעולה</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((i: AuditIssueRow) => {
-                  const applying = apply.isPending && apply.variables?.id === i.id;
-                  return (
-                    <tr key={i.id} className={`border-b border-slate-100 align-top ${i.status !== "pending" ? "opacity-60" : ""}`}>
-                      <td className="p-2 text-center"><span className={`badge ${SEV_BADGE[i.severity]}`}>{SEV_LABEL[i.severity]}</span></td>
-                      <td className="text-right p-2"><a href={i.page} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline break-all text-xs">{i.page.replace(/^https?:\/\/[^/]+/, "") || i.page}</a></td>
-                      <td className="text-right p-2 text-slate-700">{i.issue}</td>
-                      <td className="text-right p-2 text-slate-600">{i.fix}</td>
-                      <td className="p-2">
-                        {i.status === "applied" ? (
-                          <span className="text-xs text-emerald-600 inline-flex items-center gap-1" title={i.applied_note || ""}><Check size={14} /> תוקן</span>
-                        ) : i.status === "rejected" ? (
-                          <span className="text-xs text-slate-400 inline-flex items-center gap-2">נדחה
-                            <button className="text-brand-600 hover:underline inline-flex items-center gap-0.5" onClick={() => reset.mutate(i.id)}><RotateCcw size={12} /> החזר</button>
-                          </span>
-                        ) : applying ? (
-                          <span className="text-xs text-slate-500 inline-flex items-center gap-1"><Loader2 size={14} className="animate-spin" /> מבצע...</span>
-                        ) : modifyId === i.id ? (
-                          <div className="flex flex-col gap-1.5 min-w-[220px]">
-                            <textarea className="input py-1 text-xs" rows={2} autoFocus placeholder="מה לשנות בתיקון? (למשל: תוסיף גם CTA, שמור על הטון הקיים...)" value={modText} onChange={(e) => setModText(e.target.value)} />
-                            <div className="flex gap-1">
-                              <button className="btn-primary text-xs py-1 px-2" onClick={() => apply.mutate({ id: i.id, modification: modText })}><Check size={13} /> יישם עם השינוי</button>
-                              <button className="text-xs py-1 px-2 rounded text-slate-500 hover:bg-slate-100" onClick={() => setModifyId(null)}>ביטול</button>
+          <div className="space-y-4">
+            {pageGroups.map(([page, items]) => {
+              const doneInPage = items.filter((x) => x.status !== "pending").length;
+              return (
+                <div key={page} className="border border-slate-200 rounded-lg overflow-hidden">
+                  <div className="bg-slate-50 px-3 py-2 flex items-center justify-between gap-2">
+                    <a href={page} target="_blank" rel="noreferrer" className="text-sm font-medium text-brand-700 hover:underline break-all">{page.replace(/^https?:\/\/[^/]+/, "") || page}</a>
+                    <span className="text-xs text-slate-400 shrink-0">{doneInPage}/{items.length} טופלו</span>
+                  </div>
+                  <ul className="divide-y divide-slate-100">
+                    {items.map((i: AuditIssueRow) => {
+                      const applying = apply.isPending && apply.variables?.id === i.id;
+                      return (
+                        <li key={i.id} className={`p-3 flex items-start gap-3 ${i.status !== "pending" ? "bg-slate-50/40" : ""}`}>
+                          <div className="pt-0.5 shrink-0" title={i.status === "applied" ? "בוצע" : i.status === "rejected" ? "נדחה" : "ממתין"}>
+                            {i.status === "applied" ? <CheckCircle2 size={18} className="text-emerald-500" />
+                              : i.status === "rejected" ? <X size={18} className="text-slate-300" />
+                              : <div className="w-[18px] h-[18px] rounded-full border-2 border-slate-300" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`badge ${SEV_BADGE[i.severity]}`}>{SEV_LABEL[i.severity]}</span>
+                              <span className="font-medium text-slate-800">{i.issue}</span>
+                            </div>
+                            {i.fix && <div className="text-sm text-slate-600 mt-0.5">{i.fix}</div>}
+                            {i.status === "applied" && i.applied_note && <div className="text-xs text-emerald-600 mt-1">✓ {i.applied_note}</div>}
+                            <div className="mt-2">
+                              {i.status === "applied" ? null
+                                : i.status === "rejected" ? (
+                                  <span className="text-xs text-slate-400 inline-flex items-center gap-2">נדחה
+                                    <button className="text-brand-600 hover:underline inline-flex items-center gap-0.5" onClick={() => reset.mutate(i.id)}><RotateCcw size={12} /> החזר</button>
+                                  </span>
+                                ) : applying ? (
+                                  <span className="text-xs text-slate-500 inline-flex items-center gap-1"><Loader2 size={14} className="animate-spin" /> מבצע...</span>
+                                ) : modifyId === i.id ? (
+                                  <div className="flex flex-col gap-1.5 max-w-[320px]">
+                                    <textarea className="input py-1 text-xs" rows={2} autoFocus placeholder="מה לשנות בתיקון? (למשל: תוסיף גם CTA, שמור על הטון הקיים...)" value={modText} onChange={(e) => setModText(e.target.value)} />
+                                    <div className="flex gap-1">
+                                      <button className="btn-primary text-xs py-1 px-2" onClick={() => apply.mutate({ id: i.id, modification: modText })}><Check size={13} /> יישם עם השינוי</button>
+                                      <button className="text-xs py-1 px-2 rounded text-slate-500 hover:bg-slate-100" onClick={() => setModifyId(null)}>ביטול</button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    <button className="btn-primary text-xs py-1 px-2" onClick={() => apply.mutate({ id: i.id })}><Wrench size={13} /> קבל ויישם</button>
+                                    <button className="btn-secondary text-xs py-1 px-2" onClick={() => { setModifyId(i.id); setModText(""); }}><Pencil size={13} /> עם שינוי</button>
+                                    <button className="btn-secondary text-xs py-1 px-2" onClick={() => markDone.mutate(i.id)} title="סמן כבוצע ידנית (בלי הרצה)"><CheckCheck size={13} /> בוצע</button>
+                                    <button className="btn-secondary text-xs py-1 px-2" onClick={() => askAudit(i)} title="שאל את קלוד"><MessageCircle size={13} /> שאל</button>
+                                    <button className="text-xs py-1 px-2 rounded text-rose-600 hover:bg-rose-50" onClick={() => reject.mutate(i.id)}><X size={13} /> דחה</button>
+                                  </div>
+                                )}
                             </div>
                           </div>
-                        ) : (
-                          <div className="flex items-center gap-1 flex-wrap">
-                            <button className="btn-primary text-xs py-1 px-2" onClick={() => apply.mutate({ id: i.id })}><Wrench size={13} /> קבל ויישם</button>
-                            <button className="btn-secondary text-xs py-1 px-2" onClick={() => { setModifyId(i.id); setModText(""); }}><Pencil size={13} /> עם שינוי</button>
-                            <button className="btn-secondary text-xs py-1 px-2" onClick={() => markDone.mutate(i.id)} title="סמן כבוצע ידנית (בלי הרצה)"><CheckCheck size={13} /> בוצע</button>
-                            <button className="btn-secondary text-xs py-1 px-2" onClick={() => askAudit(i)} title="שאל את קלוד"><MessageCircle size={13} /> שאל</button>
-                            <button className="text-xs py-1 px-2 rounded text-rose-600 hover:bg-rose-50" onClick={() => reject.mutate(i.id)}><X size={13} /> דחה</button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              );
+            })}
           </div>
         )}
         {apply.isError && <div className="text-sm text-rose-600 mt-2">שגיאה בביצוע התיקון: {(apply.error as any)?.message}</div>}

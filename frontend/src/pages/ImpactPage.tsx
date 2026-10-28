@@ -51,13 +51,32 @@ export default function ImpactPage() {
         }
       />
       <DataSourceBanner cid={cid} match={["Search Console", "Analytics"]} />
-      {refresh.isError && <div className="mb-3 text-sm text-rose-600">שגיאת סנכרון: {(refresh.error as any)?.message}</div>}
+      {refresh.isError && (() => {
+        const msg = (refresh.error as any)?.message || "";
+        const notConnected = /לא מחובר|google|gsc_property|חסר/i.test(msg);
+        return (
+          <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-sm px-3 py-2">
+            {notConnected
+              ? <>כדי למשוך נתוני השפעה צריך לחבר את חשבון <b>Google Search Console</b> של הלקוח (בהגדרות הלקוח). שים לב: קובצי ה-CSV שהעלית אינם משמשים כאן — הלשונית מושכת נתונים חיים מ-GSC.</>
+              : <>שגיאת סנכרון: {msg}</>}
+          </div>
+        );
+      })()}
 
       <div className="card">
         {isLoading ? (
           <Spinner />
         ) : list.length === 0 ? (
-          <div className="text-center py-10 text-slate-400 text-sm"><Activity size={36} className="mx-auto mb-2 text-slate-300" />עדיין לא בוצעו המלצות. בצע המלצות ב"מנוע המלצות" והן יופיעו כאן עם ההשפעה.</div>
+          <div className="text-center py-10 text-slate-500 text-sm max-w-xl mx-auto">
+            <Activity size={36} className="mx-auto mb-2 text-slate-300" />
+            <p className="font-medium text-slate-600 mb-2">עדיין אין נתוני השפעה להצגה</p>
+            <p className="text-slate-400 leading-relaxed">כדי שתופיע כאן השפעה צריך שני דברים:</p>
+            <ol className="text-right text-slate-400 leading-relaxed mt-1 inline-block">
+              <li>1. חיבור חי של חשבון <b>Google Search Console</b> של הלקוח (לא קובצי ה-CSV שהועלו).</li>
+              <li>2. לפחות פעולה אחת שסומנה <b>"בוצע"</b> (המלצה / אודיט / משימה) עם כתובת עמוד.</li>
+            </ol>
+            <p className="text-slate-400 mt-2">אחרי שאלה קיימים — לחץ "רענן נתונים" והטבלה תתמלא.</p>
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm border-collapse min-w-[760px]">

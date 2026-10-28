@@ -914,6 +914,7 @@ export interface BlogPost {
   url: string | null;
   status: string | null;
   error: string | null;
+  sources: string[] | null;
   created_at: string;
 }
 
@@ -976,8 +977,14 @@ export async function publishBlogNow(clientId: number): Promise<{ title: string;
 }
 
 /** Generate a SAMPLE article draft (no publishing). Returns the title + a preview. */
-export async function sampleBlog(clientId: number, keyword?: string): Promise<{ title: string; keyword: string; preview?: string; image?: boolean }> {
-  return await invokeFn("blog-publish", { client_id: clientId, dry_run: true, keyword: keyword || undefined });
+export async function sampleBlog(clientId: number, keyword?: string, sources?: string[], modification?: string): Promise<{ title: string; keyword: string; preview?: string; image?: boolean }> {
+  return await invokeFn("blog-publish", { client_id: clientId, dry_run: true, keyword: keyword || undefined, sources: sources && sources.length ? sources : undefined, modification: modification || undefined });
+}
+
+/** Save the reference source URLs the writer must use for a specific proposal. */
+export async function setBlogProposalSources(id: number, sources: string[]): Promise<void> {
+  const { error } = await supabase.from("blog_posts").update({ sources }).eq("id", id);
+  if (error) throw error;
 }
 
 export async function listBlogPosts(clientId: number): Promise<BlogPost[]> {
@@ -1452,22 +1459,48 @@ export async function saveBranding(clientId: number, body: { logo_url?: string |
   if (error) throw error;
 }
 
-// --- Customizable sidebar menu layout (team-wide) ---
-export async function getNavConfig(): Promise<NavEntry[] | null> {
+// --- Customizable sidebar menu layout ---
+// Global layout lives under app_settings key "client_nav" (applies to every client).
+// A per-client override lives under "client_nav:<clientId>" and, when present, wins
+// for that client only. This lets you set one global menu and tweak individual clients.
+const navKey = (clientId?: number) => (clientId ? `client_nav:${clientId}` : "client_nav");
+
+export async function getGlobalNavConfig(): Promise<NavEntry[] | null> {
   const { data, error } = await supabase.from("app_settings").select("value").eq("key", "client_nav").maybeSingle();
   if (error) throw error;
   return (data?.value as NavEntry[]) || null;
 }
-export async function saveNavConfig(value: NavEntry[]): Promise<void> {
-  const { error } = await supabase.from("app_settings").upsert({ key: "client_nav", value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+/** The raw per-client override, or null if the client uses the global layout. */
+export async function getClientNavOverride(clientId: number): Promise<NavEntry[] | null> {
+  const { data, error } = await supabase.from("app_settings").select("value").eq("key", navKey(clientId)).maybeSingle();
+  if (error) throw error;
+  return (data?.value as NavEntry[]) || null;
+}
+/** Effective layout for a client: its override if any, else the global layout. */
+export async function getNavConfig(clientId?: number): Promise<NavEntry[] | null> {
+  if (clientId) {
+    const override = await getClientNavOverride(clientId);
+    if (override && override.length) return override;
+  }
+  return await getGlobalNavConfig();
+}
+export async function saveNavConfig(value: NavEntry[], clientId?: number): Promise<void> {
+  const { error } = await supabase.from("app_settings").upsert({ key: navKey(clientId), value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+  if (error) throw error;
+}
+/** Remove a client's override so it falls back to the global layout. */
+export async function resetClientNavOverride(clientId: number): Promise<void> {
+  const { error } = await supabase.from("app_settings").delete().eq("key", navKey(clientId));
   if (error) throw error;
 }
 
-// --- Report items (completed actions inside a report) ---
+// --- Report items (blocks inside a report: action items, headings, free-text) ---
+export type ReportBlockType = "action" | "heading" | "text";
 export interface ReportItem {
   id: number; report_id: number; client_id: number;
   title: string; why: string | null; page_url: string | null; category: string | null; custom_group: string | null;
   source_type: string | null; source_ref: string | null; sort_order: number; created_at: string;
+  block_type: ReportBlockType; heading_kind: string | null; text_size: string | null;
 }
 /** Merge several items under one custom heading (or pass null to un-merge). */
 export async function setReportItemsGroup(ids: number[], label: string | null): Promise<void> {
@@ -1476,19 +1509,46 @@ export async function setReportItemsGroup(ids: number[], label: string | null): 
   if (error) throw error;
 }
 export async function listReportItems(reportId: number): Promise<ReportItem[]> {
-  const { data, error } = await supabase.from("report_items").select("*").eq("report_id", reportId).order("sort_order", { ascending: true });
+  const { data, error } = await supabase.from("report_items").select("*").eq("report_id", reportId).order("sort_order", { ascending: true }).order("id", { ascending: true });
   if (error) throw error;
   return data || [];
 }
 export async function createReportItem(reportId: number, clientId: number, body: { title: string; why?: string | null; page_url?: string | null }): Promise<ReportItem> {
   const { data, error } = await supabase.from("report_items")
-    .insert({ report_id: reportId, client_id: clientId, title: body.title, why: body.why || null, page_url: body.page_url || null, source_type: "manual" })
+    .insert({ report_id: reportId, client_id: clientId, title: body.title, why: body.why || null, page_url: body.page_url || null, source_type: "manual", block_type: "action", sort_order: await nextReportSort(reportId) })
     .select().single();
   if (error) throw error;
   return data;
 }
-export async function updateReportItem(id: number, body: Partial<Pick<ReportItem, "title" | "why" | "page_url">>): Promise<void> {
+/** Create a heading or free-text block (or action) at the end of the report. */
+export async function createReportBlock(reportId: number, clientId: number, body: { block_type: ReportBlockType; title?: string; why?: string | null; heading_kind?: string | null; text_size?: string | null }): Promise<ReportItem> {
+  const { data, error } = await supabase.from("report_items")
+    .insert({ report_id: reportId, client_id: clientId, source_type: "manual",
+      block_type: body.block_type, title: body.title ?? "", why: body.why ?? null,
+      heading_kind: body.heading_kind ?? null, text_size: body.text_size ?? null, sort_order: await nextReportSort(reportId) })
+    .select().single();
+  if (error) throw error;
+  return data;
+}
+async function nextReportSort(reportId: number): Promise<number> {
+  const { data } = await supabase.from("report_items").select("sort_order").eq("report_id", reportId).order("sort_order", { ascending: false }).limit(1).maybeSingle();
+  return ((data?.sort_order as number) ?? 0) + 1;
+}
+export async function updateReportItem(id: number, body: Partial<Pick<ReportItem, "title" | "why" | "page_url" | "heading_kind" | "text_size">>): Promise<void> {
   const { error } = await supabase.from("report_items").update(body).eq("id", id);
+  if (error) throw error;
+}
+/** Persist a new order (drag-reorder): writes sort_order = position for each id. */
+export async function reorderReportItems(orderedIds: number[]): Promise<void> {
+  await Promise.all(orderedIds.map((id, idx) => supabase.from("report_items").update({ sort_order: idx }).eq("id", id)));
+}
+/** Add a single completed action (from the activity log) to a report, deduped (#2b). */
+export async function addActivityToReport(reportId: number, clientId: number, e: ActivityEntry): Promise<void> {
+  const rawId = e.id.split(":")[1] || e.id;
+  const { error } = await supabase.from("report_items").upsert({
+    report_id: reportId, client_id: clientId, title: e.title, why: null, page_url: e.page || null,
+    source_type: e.kind, source_ref: rawId, block_type: "action", sort_order: await nextReportSort(reportId),
+  }, { onConflict: "report_id,source_type,source_ref", ignoreDuplicates: true });
   if (error) throw error;
 }
 export async function deleteReportItem(id: number): Promise<void> {

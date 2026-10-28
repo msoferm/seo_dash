@@ -36,7 +36,7 @@ function Sidebar() {
   const navItem = "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors";
   const active = "bg-brand-50 text-brand-700";
   const inactive = "text-slate-600 hover:bg-slate-100";
-  const { data: navCfg } = useQuery({ queryKey: ["nav-config"], queryFn: () => api.getNavConfig() });
+  const { data: navCfg } = useQuery({ queryKey: ["nav-config", cid], queryFn: () => api.getNavConfig(cid ? Number(cid) : undefined) });
   const entries = resolveNav(navCfg);
   const [editOpen, setEditOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
@@ -104,7 +104,7 @@ function Sidebar() {
           })()}
         </>
       )}
-      {editOpen && <NavEditor config={navCfg ?? null} onClose={() => setEditOpen(false)} />}
+      {editOpen && cid && <NavEditor clientId={Number(cid)} onClose={() => setEditOpen(false)} />}
       <div className="mt-auto pt-4 border-t border-slate-100 text-xs text-slate-500">
         <div className="px-3 truncate flex items-center gap-1 mb-2">
           <Users size={14} /> {user?.email}

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Newspaper, Loader2, Plug, Check, ExternalLink, Trash2, Send, CalendarClock, AlertTriangle, Save, Lightbulb, X, Pencil, MessageCircle } from "lucide-react";
+import { Newspaper, Loader2, Plug, Check, ExternalLink, Trash2, Send, CalendarClock, AlertTriangle, Save, Lightbulb, X, Pencil, MessageCircle, Link2, Plus } from "lucide-react";
 import * as api from "../api";
 import type { BlogPost } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -68,11 +68,16 @@ function ProposalCard({ cid, p, client }: { cid: number; p: BlogPost; client?: {
   const [modText, setModText] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState<AssistantSeed | null>(null);
+  const [srcOpen, setSrcOpen] = useState(false);
+  const [srcList, setSrcList] = useState<string[]>(p.sources && p.sources.length ? p.sources : [""]);
+  const cleanSources = srcList.map((s) => s.trim()).filter((s) => /^https?:\/\//i.test(s));
 
   const approve = useMutation({ mutationFn: (mod?: string) => api.approveBlogProposal(p.id, mod), onSuccess: invalidate });
   const reject = useMutation({ mutationFn: () => api.rejectBlogProposal(p.id), onSuccess: invalidate });
   const markDone = useMutation({ mutationFn: () => api.setBlogPostDone(p.id), onSuccess: invalidate });
-  const sample = useMutation({ mutationFn: () => api.sampleBlog(cid, p.keyword || undefined) });
+  const sample = useMutation({ mutationFn: () => api.sampleBlog(cid, p.keyword || undefined, cleanSources, modOpen ? modText.trim() : undefined) });
+  const saveSources = useMutation({ mutationFn: () => api.setBlogProposalSources(p.id, cleanSources), onSuccess: invalidate });
+  const savedCount = (p.sources || []).length;
 
   const ask = () => {
     setChatSeed({ title: "התייעצות על הצעת מאמר", nonce: Date.now(), context: `התייעצות על הצעת מאמר לבלוג של ${client?.name || "הלקוח"} (${client?.domain || ""}).\nכותרת מוצעת: ${p.title}\nמילת מפתח: ${p.keyword || "—"}\nנימוק: ${p.reason || "—"}` });
@@ -98,8 +103,11 @@ function ProposalCard({ cid, p, client }: { cid: number; p: BlogPost; client?: {
           {approve.isPending ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} {approve.isPending ? "כותב ומפרסם..." : "בצע (כתוב ופרסם)"}
         </button>
         <button className="btn-secondary text-sm py-1.5" onClick={() => setModOpen((o) => !o)}><Pencil size={15} /> בצע עם שינוי</button>
-        <button className="text-sm py-1.5 px-3 rounded-lg text-emerald-700 hover:bg-emerald-50 inline-flex items-center gap-1" onClick={() => markDone.mutate()} disabled={markDone.isPending}>
-          {markDone.isPending ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} בוצע
+        <button className={`btn-secondary text-sm py-1.5 ${savedCount ? "text-brand-700 border-brand-200 bg-brand-50" : ""}`} onClick={() => setSrcOpen((o) => !o)}>
+          <Link2 size={15} /> הוספת מקורות{savedCount ? ` (${savedCount})` : ""}
+        </button>
+        <button className={`btn-secondary text-sm py-1.5 ${markDone.isSuccess ? "text-emerald-700 border-emerald-200 bg-emerald-50" : ""}`} onClick={() => markDone.mutate()} disabled={markDone.isPending || markDone.isSuccess}>
+          {markDone.isPending ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} className={markDone.isSuccess ? "text-emerald-600" : ""} />} בוצע
         </button>
         <button className="text-sm py-1.5 px-3 rounded-lg text-brand-600 hover:bg-brand-50 inline-flex items-center gap-1" onClick={ask}><MessageCircle size={15} /> שאל</button>
         <button className="text-sm py-1.5 px-3 rounded-lg text-slate-500 hover:bg-slate-100 inline-flex items-center gap-1" onClick={() => reject.mutate()} disabled={reject.isPending}><X size={15} /> התעלם</button>
@@ -107,10 +115,31 @@ function ProposalCard({ cid, p, client }: { cid: number; p: BlogPost; client?: {
 
       {modOpen && (
         <div className="mt-2">
-          <textarea className="input" rows={2} placeholder="מה לשנות/להוסיף בכתיבה (למשל: טון שיווקי יותר, הוסף קריאה לפעולה, התמקד באזור X)" value={modText} onChange={(e) => setModText(e.target.value)} />
+          <textarea className="input" rows={2} placeholder="מה לשנות/להוסיף בכתיבה (למשל: טון שיווקי יותר, הוסף קריאה לפעולה, התמקד באזור X, מאמר קצר יותר)" value={modText} onChange={(e) => setModText(e.target.value)} />
           <button className="btn-primary text-sm py-1.5 mt-2" onClick={() => approve.mutate(modText.trim() || undefined)} disabled={approve.isPending || !modText.trim()}>
             {approve.isPending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} כתוב עם השינוי
           </button>
+        </div>
+      )}
+
+      {srcOpen && (
+        <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <p className="text-xs text-slate-500 mb-2">הדבק כתובות URL של מקורות מהאינטרנט. המערכת תקרא כל מקור ותתבסס עליו — "צור דוגמה"/"בצע" יפיקו מאמר מקיף ואיכותי ששואב רעיונות וטקסטים מהמקורות (אלא אם ביקשת ב"בצע עם שינוי" מאמר קצר יותר).</p>
+          {srcList.map((s, i) => (
+            <div key={i} className="flex items-center gap-1.5 mb-1.5">
+              <input className="input flex-1 text-sm py-1" placeholder="https://..." value={s}
+                onChange={(e) => setSrcList((l) => l.map((v, idx) => idx === i ? e.target.value : v))} />
+              <button className="text-slate-400 hover:text-rose-600 p-1 shrink-0" title="הסר" onClick={() => setSrcList((l) => l.length > 1 ? l.filter((_, idx) => idx !== i) : [""])}><Trash2 size={14} /></button>
+            </div>
+          ))}
+          <div className="flex items-center gap-2 mt-1">
+            <button className="btn-secondary text-sm py-1" onClick={() => setSrcList((l) => [...l, ""])}><Plus size={14} /> עוד מקור</button>
+            <button className="btn-primary text-sm py-1" onClick={() => saveSources.mutate()} disabled={saveSources.isPending}>
+              {saveSources.isPending ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} שמור מקורות
+            </button>
+            {saveSources.isSuccess && <span className="text-sm text-emerald-600">נשמר ✓</span>}
+            {saveSources.isError && <span className="text-sm text-rose-600">{(saveSources.error as any)?.message}</span>}
+          </div>
         </div>
       )}
 
@@ -146,6 +175,7 @@ export default function BlogPage() {
   const propose = useMutation({ mutationFn: () => api.proposeBlog(cid), onSuccess: invalidate });
 
   const [bridgeSecret, setBridgeSecret] = useState("");
+  const [historyMonth, setHistoryMonth] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState<AssistantSeed | null>(null);
   const askContent = () => { setChatSeed({ title: "כתיבת תוכן לבלוג", nonce: Date.now(), context: `התייעצות על כתיבת תוכן/מאמרים לבלוג של ${client?.name || "הלקוח"} (${client?.domain || ""}). נושאים: רעיונות למאמרים, מבנה, טון, מילות מפתח, שיפור טיוטות.` }); setChatOpen(true); };
@@ -253,13 +283,29 @@ export default function BlogPage() {
           )}
 
           {/* History */}
+          {(() => {
+            const history = (posts || []).filter((p) => ["publish", "draft", "error", "done"].includes(p.status || ""));
+            const months = [...new Set(history.map((p) => (p.created_at || "").slice(0, 7)).filter(Boolean))].sort().reverse();
+            const monthLabel = (m: string) => new Date(m + "-01T00:00:00").toLocaleDateString("he-IL", { month: "long", year: "numeric" });
+            const shown = historyMonth ? history.filter((p) => (p.created_at || "").slice(0, 7) === historyMonth) : history;
+            return (
           <div className="card">
-            <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-3"><Newspaper size={18} /> היסטוריית מאמרים</h3>
-            {!posts || posts.filter((p) => ["publish", "draft", "error", "done"].includes(p.status || "")).length === 0 ? (
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+              <h3 className="font-semibold flex items-center gap-2 text-slate-800"><Newspaper size={18} /> היסטוריית מאמרים</h3>
+              {months.length > 0 && (
+                <select className="input py-1 text-sm w-auto" value={historyMonth} onChange={(e) => setHistoryMonth(e.target.value)}>
+                  <option value="">כל החודשים</option>
+                  {months.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
+                </select>
+              )}
+            </div>
+            {history.length === 0 ? (
               <p className="text-slate-400 text-sm">עדיין לא פורסמו מאמרים. {wp.require_approval ? 'לחץ "הצע נושא" לקבלת הצעה' : 'לחץ "כתוב ופרסם עכשיו"'} או המתן לריצה השבועית.</p>
+            ) : shown.length === 0 ? (
+              <p className="text-slate-400 text-sm">אין מאמרים בחודש שנבחר.</p>
             ) : (
               <ul className="divide-y divide-slate-100">
-                {posts.filter((p) => ["publish", "draft", "error", "done"].includes(p.status || "")).map((p: BlogPost) => (
+                {shown.map((p: BlogPost) => (
                   <li key={p.id} className="py-3 flex items-start gap-3">
                     <span className={`badge ${STATUS_BADGE[p.status || ""] || "bg-slate-100 text-slate-600"} shrink-0 mt-0.5`}>{STATUS_LABEL[p.status || ""] || p.status}</span>
                     <div className="flex-1 min-w-0">
@@ -275,6 +321,8 @@ export default function BlogPage() {
               </ul>
             )}
           </div>
+            );
+          })()}
 
           <AssistantFab onClick={askContent} />
           <TaskAssistant cid={cid} open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} />

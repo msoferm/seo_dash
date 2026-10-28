@@ -1,24 +1,41 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { X, Save, Loader2, ChevronUp, ChevronDown, Plus, Trash2, Heading, RotateCcw, GripVertical, ChevronsDownUp } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { X, Save, Loader2, ChevronUp, ChevronDown, Plus, Trash2, Heading, RotateCcw, GripVertical, ChevronsDownUp, Globe, User } from "lucide-react";
 import * as api from "./api";
 import { CLIENT_NAV_BY_KEY, resolveNav } from "./navItems";
 import type { NavEntry } from "./navItems";
 
-export default function NavEditor({ config, onClose }: { config: NavEntry[] | null; onClose: () => void }) {
+export default function NavEditor({ clientId, onClose }: { clientId: number; onClose: () => void }) {
   const qc = useQueryClient();
   const [list, setList] = useState<NavEntry[]>([]);
+  const [scope, setScope] = useState<"global" | "client">("global");
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
-  useEffect(() => { setList(resolveNav(config)); }, [config]);
 
+  const { data: globalCfg } = useQuery({ queryKey: ["nav-config-global"], queryFn: () => api.getGlobalNavConfig() });
+  const { data: clientOverride } = useQuery({ queryKey: ["nav-config-override", clientId], queryFn: () => api.getClientNavOverride(clientId) });
+  const hasOverride = !!(clientOverride && clientOverride.length);
+
+  // Initial scope: if this client already has its own override, open on that; else global.
+  useEffect(() => { setScope(hasOverride ? "client" : "global"); }, [hasOverride]);
+  // Load the list for the active scope.
+  useEffect(() => {
+    const base = scope === "client" ? (clientOverride ?? globalCfg) : globalCfg;
+    setList(resolveNav(base));
+  }, [scope, globalCfg, clientOverride]);
+
+  const invalidateNav = () => {
+    qc.invalidateQueries({ queryKey: ["nav-config"] });
+    qc.invalidateQueries({ queryKey: ["nav-config-global"] });
+    qc.invalidateQueries({ queryKey: ["nav-config-override", clientId] });
+  };
   const save = useMutation({
-    mutationFn: () => api.saveNavConfig(list),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["nav-config"] }); onClose(); },
+    mutationFn: () => api.saveNavConfig(list, scope === "client" ? clientId : undefined),
+    onSuccess: () => { invalidateNav(); onClose(); },
   });
   const reset = useMutation({
-    mutationFn: () => api.saveNavConfig([]),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["nav-config"] }); onClose(); },
+    mutationFn: () => scope === "client" ? api.resetClientNavOverride(clientId) : api.saveNavConfig([]),
+    onSuccess: () => { invalidateNav(); onClose(); },
   });
 
   const move = (i: number, d: -1 | 1) => {
@@ -41,7 +58,23 @@ export default function NavEditor({ config, onClose }: { config: NavEntry[] | nu
           <h3 className="font-bold text-slate-900">עריכת תפריט</h3>
           <button className="text-slate-400 hover:text-slate-700 p-1" onClick={onClose}><X size={20} /></button>
         </div>
-        <div className="px-5 py-2 text-xs text-slate-500">גרור פריטים עם העכבר (או בחצים) כדי לסדר. הוסף כותרות לקיבוץ לשוניות, וסמן כותרת כ"תפריט נפתח" כדי שהלשוניות תחתיה ייפתחו/ייסגרו בלחיצה.</div>
+        <div className="px-5 pt-3">
+          <div className="flex gap-1 p-1 bg-slate-100 rounded-lg">
+            <button
+              className={`flex-1 flex items-center justify-center gap-1.5 text-sm py-1.5 rounded-md transition-colors ${scope === "global" ? "bg-white shadow-sm text-brand-700 font-medium" : "text-slate-500 hover:text-slate-700"}`}
+              onClick={() => setScope("global")}
+            ><Globe size={15} /> תפריט גלובלי (כל הלקוחות)</button>
+            <button
+              className={`flex-1 flex items-center justify-center gap-1.5 text-sm py-1.5 rounded-md transition-colors ${scope === "client" ? "bg-white shadow-sm text-brand-700 font-medium" : "text-slate-500 hover:text-slate-700"}`}
+              onClick={() => setScope("client")}
+            ><User size={15} /> התאמה ללקוח זה {hasOverride && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}</button>
+          </div>
+        </div>
+        <div className="px-5 py-2 text-xs text-slate-500">
+          {scope === "global"
+            ? "עריכת התפריט שחל על כל הלקוחות. גרור פריטים עם העכבר (או בחצים) לסידור, הוסף כותרות לקיבוץ, וסמן כותרת כ\"תפריט נפתח\"."
+            : `התאמה ללקוח הזה בלבד, על בסיס התפריט הגלובלי. ${hasOverride ? "ללקוח יש כבר התאמה אישית." : "כרגע הלקוח משתמש בתפריט הגלובלי — שמירה כאן תיצור לו התאמה נפרדת."}`}
+        </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-2 space-y-1">
           {list.map((e, i) => (
@@ -86,11 +119,17 @@ export default function NavEditor({ config, onClose }: { config: NavEntry[] | nu
 
         <div className="px-5 py-3 border-t border-slate-200 flex items-center gap-2">
           <button className="btn-secondary text-sm py-1.5" onClick={addHeading}><Plus size={15} /> הוסף כותרת</button>
-          <button className="text-sm py-1.5 px-3 rounded-lg text-slate-500 hover:bg-slate-100 inline-flex items-center gap-1" onClick={() => { if (confirm("לאפס את התפריט לברירת המחדל?")) reset.mutate(); }}><RotateCcw size={14} /> אפס</button>
+          {scope === "client" ? (
+            <button className="text-sm py-1.5 px-3 rounded-lg text-slate-500 hover:bg-slate-100 inline-flex items-center gap-1" disabled={!hasOverride || reset.isPending}
+              onClick={() => { if (confirm("לבטל את ההתאמה האישית של הלקוח ולחזור לתפריט הגלובלי?")) reset.mutate(); }}><RotateCcw size={14} /> חזור לגלובלי</button>
+          ) : (
+            <button className="text-sm py-1.5 px-3 rounded-lg text-slate-500 hover:bg-slate-100 inline-flex items-center gap-1" disabled={reset.isPending}
+              onClick={() => { if (confirm("לאפס את התפריט הגלובלי לברירת המחדל?")) reset.mutate(); }}><RotateCcw size={14} /> אפס לברירת מחדל</button>
+          )}
           <div className="flex-1" />
           <button className="btn-secondary text-sm py-1.5" onClick={onClose}>ביטול</button>
           <button className="btn-primary text-sm py-1.5" onClick={() => save.mutate()} disabled={save.isPending}>
-            {save.isPending ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} שמור
+            {save.isPending ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} {scope === "client" ? "שמור ללקוח" : "שמור גלובלי"}
           </button>
         </div>
       </div>

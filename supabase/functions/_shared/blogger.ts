@@ -95,7 +95,19 @@ export async function proposeForClient(sb: any, clientId: number): Promise<Propo
 }
 
 // ---------- write + publish a specific keyword ----------
-async function writeAndPublish(sb: any, clientId: number, keyword: string, opts: { proposalId?: number; dryRun?: boolean; modification?: string } = {}): Promise<PublishResult> {
+// Fetch a web source and reduce it to plain-ish text for use as reference material.
+async function fetchSourceText(url: string): Promise<string> {
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36" } });
+    if (!res.ok) return "";
+    let html = await res.text();
+    html = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
+    const text = html.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim();
+    return text.slice(0, 3000);
+  } catch { return ""; }
+}
+
+export async function writeAndPublish(sb: any, clientId: number, keyword: string, opts: { proposalId?: number; dryRun?: boolean; modification?: string; sources?: string[] } = {}): Promise<PublishResult> {
   const { data: client } = await sb.from("clients").select("*").eq("id", clientId).maybeSingle();
   if (!client) throw new Error("לקוח לא נמצא");
   const { data: cw } = await sb.from("client_wordpress").select("*").eq("client_id", clientId).maybeSingle();
@@ -108,9 +120,27 @@ async function writeAndPublish(sb: any, clientId: number, keyword: string, opts:
     .map((z) => `${z.keyword}${z.local_searches ? ` (${z.local_searches} חיפושים${z.ranking ? `, מיקום ${z.ranking}` : ""})` : ""}`);
   const instructions = (cw?.blog_instructions || "").trim();
 
+  // Reference sources (#5c): fetch each URL the user attached and require the writer to draw on them.
+  const sourceUrls = (opts.sources || []).filter((u) => typeof u === "string" && /^https?:\/\//i.test(u)).slice(0, 5);
+  let sourcesBlock = "";
+  if (sourceUrls.length) {
+    const fetched = await Promise.all(sourceUrls.map(async (u) => ({ u, t: await fetchSourceText(u) })));
+    const usable = fetched.filter((f) => f.t.length > 80);
+    if (usable.length) {
+      sourcesBlock = usable.map((f, i) => `מקור ${i + 1} (${f.u}):\n${f.t}`).join("\n\n");
+    }
+  }
+  const hasSources = sourcesBlock.length > 0;
+  const lengthRule = hasSources
+    ? (opts.modification && opts.modification.trim()
+        ? "אורך: מאמר מקיף אך תמציתי יחסית, 700-1000 מילים, תוך ניצול הרעיונות מהמקורות. "
+        : "אורך: מאמר סופר-איכותי, מעמיק ומקיף, 1100-1600 מילים, עם כיסוי רחב של הנושא. ")
+    : "600-900 מילים. ";
+
   const system =
-    "אתה כותב תוכן SEO מקצועי בעברית לבלוג עסקי. כתוב מאמר איכותי, מקורי ומועיל סביב מילת המפתח — כותרת ממוקדת-SEO, מבנה H2/H3, פסקאות ורשימות. 600-900 מילים. " +
+    "אתה כותב תוכן SEO מקצועי בעברית לבלוג עסקי. כתוב מאמר איכותי, מקורי ומועיל סביב מילת המפתח — כותרת ממוקדת-SEO, מבנה H2/H3, פסקאות ורשימות. " + lengthRule +
     "שלב את מילת המפתח באופן טבעי ושזור מונחים קשורים מהרשימה שסופקה. אל תמציא עובדות/מספרים/מחירים שאינך יכול לאמת. " +
+    (hasSources ? "חובה: התבסס על חומרי המקור שסופקו למטה — קח מהם רעיונות, נקודות, זוויות וטקסטים, שלב אותם בצורה מקורית (בלי העתקה מילולית) והתייחס לכל אחד מהמקורות. " : "") +
     (instructions ? `הנחיות חובה של הצוות (כבד תמיד): ${instructions}\n` : "") +
     (opts.modification && opts.modification.trim() ? `שינוי/הנחיה נוספת לכתיבה הספציפית הזו (חובה לכבד): ${opts.modification.trim()}\n` : "") +
     "אם התבקשת לשים קישור פנימי לעמוד מסוים — השתמש בכתובת ה-URL המדויקת שסופקה ועגן אותו על טקסט העוגן הרלוונטי (למשל על הביטוי 'כתב כמויות'), ולא על עמוד הבית ולא על טקסט כללי. " +
@@ -125,9 +155,10 @@ async function writeAndPublish(sb: any, clientId: number, keyword: string, opts:
     `עסק: ${client.name} (${client.domain}). הערות: ${client.notes || "—"}.\n` +
     `מילת מפתח יעד: "${keyword}".\n` +
     (related.length ? `מילות מפתח קשורות (ZEFO): ${related.join(" | ")}.\n` : "") +
+    (hasSources ? `\n=== חומרי מקור שעליך להתבסס עליהם (חובה) ===\n${sourcesBlock}\n=== סוף חומרי המקור ===\n` : "") +
     `כתוב מאמר בלוג שיווקי-מקצועי.`;
 
-  const resp = await callClaude({ model: DEFAULT_MODEL, max_tokens: 8000, system, messages: [{ role: "user", content: userMsg }] });
+  const resp = await callClaude({ model: DEFAULT_MODEL, max_tokens: hasSources ? 12000 : 8000, system, messages: [{ role: "user", content: userMsg }] });
   const text = textOf(resp);
   const title = (text.match(/TITLE:\s*(.+)/)?.[1] || "").trim();
   const excerpt = (text.match(/EXCERPT:\s*(.+)/)?.[1] || "").trim();
@@ -187,7 +218,7 @@ export async function approveProposal(sb: any, proposalId: number, modification?
   const { data: p } = await sb.from("blog_posts").select("*").eq("id", proposalId).maybeSingle();
   if (!p) throw new Error("ההצעה לא נמצאה");
   if (p.status !== "proposed") throw new Error("ההצעה כבר טופלה");
-  return await writeAndPublish(sb, p.client_id, p.keyword, { proposalId, modification });
+  return await writeAndPublish(sb, p.client_id, p.keyword, { proposalId, modification, sources: (p.sources as string[]) || undefined });
 }
 
 /** Generate a featured image with AI (Pollinations — free, no API key). */

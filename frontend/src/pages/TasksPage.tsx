@@ -50,7 +50,7 @@ function SubtaskRow({ t, cid, onAction, onPreview, onAsk, busy, previewing, exec
   const [showNote, setShowNote] = useState(false);
   const [note, setNote] = useState("");
   const [openNote, setOpenNote] = useState(false);
-  const [openPreview, setOpenPreview] = useState(true);
+  const [openPreview, setOpenPreview] = useState(false);
   const done = t.status === "done";
   const ignored = t.status === "ignored";
   const link = deepLink(cid, t);
@@ -81,6 +81,7 @@ function SubtaskRow({ t, cid, onAction, onPreview, onAsk, busy, previewing, exec
             {t.page_url && <a href={t.page_url} target="_blank" rel="noreferrer" className="text-xs text-sky-700 hover:underline inline-flex items-center gap-0.5 font-medium" title={t.page_url}><ExternalLink size={11} /> העמוד באתר</a>}
             {link && <Link to={link.href} className="text-xs text-brand-600 hover:underline inline-flex items-center gap-0.5"><ExternalLink size={11} /> {link.label}</Link>}
             {done && t.source_type === "recommendation" && <Link to={`/clients/${cid}/impact`} className="text-xs text-emerald-600 hover:underline inline-flex items-center gap-0.5"><Activity size={11} /> מעקב השפעה</Link>}
+            {done && /בוצע דרך/.test(t.note || "") && <span className="badge bg-emerald-50 text-emerald-600">✓ {(t.note || "").match(/בוצע דרך[^\n]*/)?.[0]}</span>}
           </div>
 
           {/* Preview (draft text / detailed steps) */}
@@ -214,7 +215,9 @@ export default function TasksPage() {
       await api.setRecommendationStatus(Number(t.source_ref), map[status]);
     } else if (t.source_type === "audit") {
       const map: Record<string, "pending" | "applied" | "rejected"> = { done: "applied", ignored: "rejected", open: "pending" };
-      await api.setAuditStatus(Number(t.source_ref), map[status]);
+      // Stamp the origin so "כלי SEO" shows where it was completed from.
+      const note = status === "done" ? "בוצע דרך תכנית עבודה אסטרטגית" : undefined;
+      await api.setAuditStatus(Number(t.source_ref), map[status], note);
     }
   }
 
