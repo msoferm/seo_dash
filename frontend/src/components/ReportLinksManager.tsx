@@ -5,19 +5,8 @@ import * as api from "../api";
 import type { ReportLink } from "../api";
 import Spinner from "./Spinner";
 
-const COMMON_TYPES = [
-  "אינדקס עסקים",
-  "אינדקס עסקים באנגלית",
-  "פוסט בבלוג",
-  "מאמר ממומן",
-  "קישור סימניה",
-  "קישור חברתי",
-  "כרטיס עסק",
-  "קישור מצגת מעוצבת",
-  "קישור פנימי",
-  "החלפת קישורים",
-  "פורום",
-];
+// All link types now live in the DB table `link_type_presets` (seeded in migration 0051),
+// so every one of them is deletable from the UI. No hardcoded list is merged in anymore.
 
 function todayStr(): string {
   const d = new Date();
@@ -44,7 +33,7 @@ export default function ReportLinksManager({ clientId }: { clientId: number }) {
     enabled: !!clientId,
   });
   const { data: presets } = useQuery({ queryKey: ["link-presets"], queryFn: () => api.listLinkTypePresets() });
-  const typeOptions = [...new Set([...(presets || []).map((p) => p.name), ...COMMON_TYPES])];
+  const typeOptions = [...new Set((presets || []).map((p) => p.name))];
 
   const [showTypes, setShowTypes] = useState(false);
   const [newType, setNewType] = useState("");
@@ -126,7 +115,7 @@ export default function ReportLinksManager({ clientId }: { clientId: number }) {
                 <button className="text-slate-400 hover:text-rose-600" onClick={() => delType.mutate(p.id)}><X size={11} /></button>
               </span>
             ))}
-            {(presets || []).length === 0 && <span className="text-xs text-slate-400">אין עדיין סוגים מותאמים (הרשימה הקבועה עדיין זמינה לבחירה).</span>}
+            {(presets || []).length === 0 && <span className="text-xs text-slate-400">אין עדיין סוגי קישור. הוסף את הראשון למעלה.</span>}
           </div>
         </div>
       )}

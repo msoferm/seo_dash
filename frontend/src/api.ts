@@ -763,6 +763,20 @@ export async function getImpactStats(clientId: number): Promise<ImpactRow[]> {
   }));
 }
 
+export interface ImpactDiagnostics { has_google_token: boolean; has_gsc_property: boolean; gsc_metric_rows: number; actions_with_page: number }
+/** Explain why the impact table is empty: which of the 4 preconditions for a client are met. */
+export async function getImpactDiagnostics(clientId: number): Promise<ImpactDiagnostics> {
+  const { data, error } = await supabase.rpc("impact_diagnostics", { p_client_id: clientId });
+  if (error) throw error;
+  const r = (Array.isArray(data) ? data[0] : data) || {};
+  return {
+    has_google_token: !!r.has_google_token,
+    has_gsc_property: !!r.has_gsc_property,
+    gsc_metric_rows: Number(r.gsc_metric_rows || 0),
+    actions_with_page: Number(r.actions_with_page || 0),
+  };
+}
+
 // ===== Activity log (what was done) — for the annual client report =====
 export interface ActivityEntry {
   id: string; date: string | null; area: string; title: string; page: string | null; note: string | null;
@@ -977,7 +991,7 @@ export async function publishBlogNow(clientId: number): Promise<{ title: string;
 }
 
 /** Generate a SAMPLE article draft (no publishing). Returns the title + a preview. */
-export async function sampleBlog(clientId: number, keyword?: string, sources?: string[], modification?: string): Promise<{ title: string; keyword: string; preview?: string; image?: boolean }> {
+export async function sampleBlog(clientId: number, keyword?: string, sources?: string[], modification?: string): Promise<{ title: string; keyword: string; preview?: string; body?: string; excerpt?: string; image?: boolean }> {
   return await invokeFn("blog-publish", { client_id: clientId, dry_run: true, keyword: keyword || undefined, sources: sources && sources.length ? sources : undefined, modification: modification || undefined });
 }
 

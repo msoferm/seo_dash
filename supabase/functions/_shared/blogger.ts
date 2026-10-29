@@ -16,7 +16,7 @@ function normalizeSite(u: string): string {
 }
 function basicAuth(user: string, pass: string): string { return "Basic " + btoa(`${user}:${pass}`); }
 
-export interface PublishResult { title: string; url: string; status: string; keyword: string; image?: boolean; preview?: string }
+export interface PublishResult { title: string; url: string; status: string; keyword: string; image?: boolean; preview?: string; body?: string; excerpt?: string }
 export interface ProposalResult { keyword: string; title: string; reason: string }
 
 // ---------- topic selection ----------
@@ -111,10 +111,9 @@ export async function writeAndPublish(sb: any, clientId: number, keyword: string
   const { data: client } = await sb.from("clients").select("*").eq("id", clientId).maybeSingle();
   if (!client) throw new Error("לקוח לא נמצא");
   const { data: cw } = await sb.from("client_wordpress").select("*").eq("client_id", clientId).maybeSingle();
-  if (!opts.dryRun) {
-    if (!cw) throw new Error("הלקוח לא מחובר ל-WordPress");
-    if (!cw.enabled) throw new Error("הבלוג האוטומטי כבוי ללקוח זה");
-  }
+  // Publishing requires a WordPress connection. The `enabled` flag governs ONLY the weekly
+  // automation (the cron selects enabled clients itself) — manual publish/approve works regardless.
+  if (!opts.dryRun && !cw) throw new Error("הלקוח לא מחובר ל-WordPress");
   const { data: zefo } = await sb.from("zefo_keywords").select("keyword, ranking, local_searches").eq("client_id", clientId).order("local_searches", { ascending: false, nullsFirst: false }).limit(30);
   const related = ((zefo || []) as any[]).filter((z) => z.keyword && z.keyword !== keyword && (z.local_searches || 0) > 0).slice(0, 15)
     .map((z) => `${z.keyword}${z.local_searches ? ` (${z.local_searches} חיפושים${z.ranking ? `, מיקום ${z.ranking}` : ""})` : ""}`);
@@ -168,7 +167,9 @@ export async function writeAndPublish(sb: any, clientId: number, keyword: string
   let html = (text.match(/BODY:\s*([\s\S]+)$/)?.[1] || "").trim();
   html = html.replace(/^```(?:html)?\s*/i, "").replace(/```\s*$/i, "").trim();
   if (!title || html.length < 40) throw new Error(`המאמר שנוצר לא תקין. פלט גולמי: ${text.slice(0, 300)}`);
-  if (opts.dryRun) return { title, url: "(dry-run)", status: "dry", keyword, image: !!imageQuery, preview: `[image: ${imageQuery}] ` + html.slice(0, 350) };
+  // Dry-run ("צור דוגמה"): return the FULL article so the UI can show the real draft,
+  // not just a truncated opening that looks like an outline.
+  if (opts.dryRun) return { title, url: "(dry-run)", status: "dry", keyword, image: !!imageQuery, excerpt, body: html, preview: html.slice(0, 350) };
 
   const site = normalizeSite(cw.site_url);
   const auth = basicAuth(cw.username, cw.app_password);

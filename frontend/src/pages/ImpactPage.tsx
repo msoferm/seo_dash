@@ -35,6 +35,7 @@ export default function ImpactPage() {
     mutationFn: async () => { setSyncing(true); await api.gscSync(cid, 90); },
     onSettled: async () => { await qc.invalidateQueries({ queryKey: ["impact", cid] }); setSyncing(false); },
   });
+  const diag = useMutation({ mutationFn: () => api.getImpactDiagnostics(cid) });
 
   const list = rows || [];
 
@@ -76,6 +77,29 @@ export default function ImpactPage() {
               <li>2. לפחות פעולה אחת שסומנה <b>"בוצע"</b> (המלצה / אודיט / משימה) עם כתובת עמוד.</li>
             </ol>
             <p className="text-slate-400 mt-2">אחרי שאלה קיימים — לחץ "רענן נתונים" והטבלה תתמלא.</p>
+            <div className="mt-4">
+              <button className="btn-secondary text-sm py-1.5" onClick={() => diag.mutate()} disabled={diag.isPending}>
+                {diag.isPending ? <Loader2 size={15} className="animate-spin" /> : <Activity size={15} />} בדוק מה חסר ללקוח הזה
+              </button>
+            </div>
+            {diag.isError && <div className="text-rose-600 text-sm mt-2">{(diag.error as any)?.message}</div>}
+            {diag.data && (() => {
+              const d = diag.data;
+              const Row = ({ ok, label, hint }: { ok: boolean; label: string; hint?: string }) => (
+                <li className="flex items-start gap-2 py-1">
+                  <span className={ok ? "text-emerald-600" : "text-rose-500"}>{ok ? "✓" : "✗"}</span>
+                  <span className="text-slate-600">{label}{!ok && hint ? <span className="text-slate-400"> — {hint}</span> : null}</span>
+                </li>
+              );
+              return (
+                <ul className="text-right inline-block mt-3 bg-slate-50 rounded-lg p-3 text-sm">
+                  <Row ok={d.has_google_token} label="חשבון Google מחובר ללקוח" hint="חבר בהגדרות הלקוח" />
+                  <Row ok={d.has_gsc_property} label="מוגדר נכס Search Console (gsc_property)" hint="בחר את הנכס בהגדרות" />
+                  <Row ok={d.gsc_metric_rows > 0} label={`נתוני GSC קיימים (${d.gsc_metric_rows} שורות)`} hint='לחץ "רענן נתונים"' />
+                  <Row ok={d.actions_with_page > 0} label={`פעולות שבוצעו עם עמוד (${d.actions_with_page})`} hint="סמן המלצה/אודיט/משימה כבוצע עם כתובת עמוד" />
+                </ul>
+              );
+            })()}
           </div>
         ) : (
           <div className="overflow-x-auto">

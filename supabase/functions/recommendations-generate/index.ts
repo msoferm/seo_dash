@@ -4,6 +4,7 @@
  * title/meta, improve-page, new-content, cannibalization — each scored with an estimated
  * number of new monthly visits, potential, and effort. Replaces the client's PENDING
  * recommendations; keeps ones already applied/ignored/done (and won't re-suggest them).
+ * rev: 2026-10-29a (weak-position terms with an existing ranking page → "strengthen page", not "new content")
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
@@ -112,18 +113,36 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Weak position but demand → new content
+      // Weak position (>20) but demand. Before proposing a NEW article, check whether an
+      // existing page already ranks for the term (GSC page↔query map). If one does, the
+      // strategic move is to STRENGTHEN that page — not write a competing new one (which also
+      // risks cannibalization). Only when no page ranks at all do we propose new content.
       if (impr >= 25 && pos > 20) {
-        const est = Math.max(0, Math.round(imprM * expectedCtr(7) * 0.4));
-        push({
-          type: "new_content", source: "gsc", page: null, keyword: term,
-          title: `תוכן חדש: ${term}`,
-          opportunity: `"${term}" מקבל ${impr} חשיפות אך מדורג חלש (מיקום ${pos}) — אין עמוד חזק שעונה על הצורך.`,
-          whats_missing: "אין עמוד ייעודי שעונה במלואו על כוונת החיפוש.",
-          action: `ליצור עמוד/מאמר ייעודי ומקיף ל"${term}" (או להרחיב עמוד קרוב אם קיים).`,
-          potential: potentialOf(est), est_visits: est, effort: "high", confidence: "low",
-          score: est * 0.8,
-        });
+        const best = termBestPage.get(term);
+        const hasRankingPage = !!(best && best.page && best.impressions >= 5);
+        if (hasRankingPage) {
+          const est = Math.max(0, Math.round(imprM * expectedCtr(10) * 0.5));
+          push({
+            type: "improve_page", source: "gsc", page: best!.page, keyword: term,
+            title: `חיזוק עמוד קיים: ${term}`,
+            opportunity: `"${term}" מקבל ${impr} חשיפות אך מדורג חלש (מיקום ${pos}). כבר יש עמוד שמדרג על הביטוי (${best!.impressions} חשיפות) — עדיף לחזק אותו מאשר לכתוב מאמר מתחרה.`,
+            whats_missing: "העמוד הקיים לא ממוקד/מקיף מספיק סביב כוונת החיפוש כדי לעלות בדירוג.",
+            action: `לחזק את העמוד הקיים: שכתוב כותרת SEO ותיאור מטא מזמינים יותר, הרחבת התוכן ומענה מלא לכוונת החיפוש של "${term}", קישורים פנימיים עם טקסט עוגן מדויק, ומניעת קניבליזציה מעמודים אחרים.`,
+            potential: potentialOf(est), est_visits: est, effort: "medium", confidence: "medium",
+            score: est * 1.1,
+          });
+        } else {
+          const est = Math.max(0, Math.round(imprM * expectedCtr(7) * 0.4));
+          push({
+            type: "new_content", source: "gsc", page: null, keyword: term,
+            title: `תוכן חדש: ${term}`,
+            opportunity: `"${term}" מקבל ${impr} חשיפות אך אין באתר עמוד שמדרג על הביטוי — פער תוכן אמיתי.`,
+            whats_missing: "אין עמוד ייעודי שעונה על כוונת החיפוש (אף עמוד לא נמצא בתוצאות עבור הביטוי).",
+            action: `ליצור עמוד/מאמר ייעודי ומקיף ל"${term}".`,
+            potential: potentialOf(est), est_visits: est, effort: "high", confidence: "low",
+            score: est * 0.8,
+          });
+        }
       }
     }
 

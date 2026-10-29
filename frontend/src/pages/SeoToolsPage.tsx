@@ -38,6 +38,7 @@ export default function SeoToolsPage() {
 
   const [modifyId, setModifyId] = useState<number | null>(null);
   const [modText, setModText] = useState("");
+  const [pageFilter, setPageFilter] = useState<string>("all");
 
   const [keyword, setKeyword] = useState("");
   const brief = useMutation({ mutationFn: (kw: string) => api.generateContentBrief(cid, kw) });
@@ -63,12 +64,17 @@ export default function SeoToolsPage() {
   const sorted = (issues || []).slice().sort((a, b) =>
     (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1) || SEV_ORDER[a.severity] - SEV_ORDER[b.severity]);
   const pendingCount = (issues || []).filter((i) => i.status === "pending").length;
+  // Decode percent-encoded Hebrew URLs for display (e.g. %D7%90 → א).
+  const decode = (u: string) => { try { return decodeURIComponent(u); } catch { return u; } };
+  const pageLabel = (page: string) => decode(page.replace(/^https?:\/\/[^/]+/, "") || page);
   // Group issues by the page they belong to (pages with pending issues surface first, via `sorted`).
   const pageGroups: [string, AuditIssueRow[]][] = (() => {
     const m = new Map<string, AuditIssueRow[]>();
     for (const i of sorted) { const k = i.page || "—"; if (!m.has(k)) m.set(k, []); m.get(k)!.push(i); }
     return [...m.entries()];
   })();
+  // #10a: filter the grouped list to a single site page when one is chosen.
+  const visibleGroups = pageFilter === "all" ? pageGroups : pageGroups.filter(([page]) => page === pageFilter);
 
   return (
     <div>
@@ -95,12 +101,25 @@ export default function SeoToolsPage() {
           <p className="text-slate-400 text-sm">{audit.isSuccess ? "לא נמצאו בעיות מהותיות." : 'לחץ "הרץ אודיט" כדי לבדוק את האתר.'}</p>
         ) : (
           <div className="space-y-4">
-            {pageGroups.map(([page, items]) => {
+            {pageGroups.length > 1 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-slate-500">סנן לפי עמוד:</span>
+                <select className="input py-1 text-sm w-auto max-w-full" value={pageFilter} onChange={(e) => setPageFilter(e.target.value)}>
+                  <option value="all">כל העמודים ({pageGroups.length})</option>
+                  {pageGroups.map(([page, items]) => (
+                    <option key={page} value={page}>{page === "—" ? "ללא עמוד" : pageLabel(page)} ({items.length})</option>
+                  ))}
+                </select>
+                {pageFilter !== "all" && <button className="text-xs text-brand-600 hover:underline" onClick={() => setPageFilter("all")}>נקה</button>}
+              </div>
+            )}
+            {visibleGroups.map(([page, items]) => {
               const doneInPage = items.filter((x) => x.status !== "pending").length;
               return (
                 <div key={page} className="border border-slate-200 rounded-lg overflow-hidden">
                   <div className="bg-slate-50 px-3 py-2 flex items-center justify-between gap-2">
-                    <a href={page} target="_blank" rel="noreferrer" className="text-sm font-medium text-brand-700 hover:underline break-all">{page.replace(/^https?:\/\/[^/]+/, "") || page}</a>
+                    {page === "—" ? <span className="text-sm font-medium text-slate-500">ללא עמוד</span>
+                      : <a href={page} target="_blank" rel="noreferrer" className="text-sm font-medium text-brand-700 hover:underline break-all">{pageLabel(page)}</a>}
                     <span className="text-xs text-slate-400 shrink-0">{doneInPage}/{items.length} טופלו</span>
                   </div>
                   <ul className="divide-y divide-slate-100">

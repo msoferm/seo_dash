@@ -145,10 +145,19 @@ function ProposalCard({ cid, p, client }: { cid: number; p: BlogPost; client?: {
 
       {sample.isError && <div className="text-sm text-rose-600 mt-2">{(sample.error as any)?.message}</div>}
       {sample.data && (
-        <div className="mt-3 border border-slate-200 rounded-lg p-3 bg-slate-50">
-          <div className="font-semibold text-slate-900">{sample.data.title}</div>
-          {sample.data.keyword && <div className="text-xs text-slate-400 mb-1">מילת מפתח: {sample.data.keyword}</div>}
-          <div className="text-sm text-slate-700 whitespace-pre-wrap">{sample.data.preview || "—"}</div>
+        <div className="mt-3 border border-slate-200 rounded-lg p-3 bg-white">
+          <div className="text-xs text-emerald-600 mb-1">דוגמה — זהו המאמר המלא שייכתב (לא נשמר/פורסם)</div>
+          <div className="font-semibold text-slate-900 text-lg">{sample.data.title}</div>
+          {sample.data.keyword && <div className="text-xs text-slate-400">מילת מפתח: {sample.data.keyword}</div>}
+          {sample.data.excerpt && <div className="text-sm text-slate-500 italic mt-1">{sample.data.excerpt}</div>}
+          {sample.data.body ? (
+            <div
+              className="prose prose-sm prose-slate max-w-none mt-3 max-h-[480px] overflow-y-auto border-t border-slate-100 pt-3 text-slate-700 leading-relaxed [&_h2]:font-bold [&_h2]:text-base [&_h2]:mt-3 [&_h3]:font-semibold [&_ul]:list-disc [&_ul]:pr-5 [&_p]:my-2"
+              dangerouslySetInnerHTML={{ __html: sample.data.body }}
+            />
+          ) : (
+            <div className="text-sm text-slate-700 whitespace-pre-wrap mt-2">{sample.data.preview || "—"}</div>
+          )}
         </div>
       )}
       {approve.isError && <div className="text-sm text-rose-600 mt-2">{(approve.error as any)?.message}</div>}

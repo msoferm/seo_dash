@@ -1,5 +1,6 @@
 /**
  * POST { proposal_id }  — semi-auto step 2: write & publish the approved topic.
+ * rev: 2026-10-29a (manual approve/publish decoupled from the weekly-automation enable flag)
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
