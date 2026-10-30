@@ -8,6 +8,7 @@
  *   3) query-map-per-page / cannibalization
  *   4) new keywords worth building content from
  * Returns { recommendations }.
+ * rev: 2026-10-30a (respects keyword_targets: declared target pages steer the advice + cannibalization)
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
@@ -34,11 +35,14 @@ Deno.serve(async (req) => {
     const { data: client } = await sb.from("clients").select("*").eq("id", client_id).maybeSingle();
     if (!client) return errorResponse("לקוח לא נמצא", 404);
 
-    const [{ data: oppRows }, { data: mapRows }, zefoRes] = await Promise.all([
+    const [{ data: oppRows }, { data: mapRows }, zefoRes, ktRes] = await Promise.all([
       sb.rpc("gsc_query_opportunities", { p_client_id: client_id, p_from: from, p_to: to }),
       sb.rpc("gsc_page_query_map", { p_client_id: client_id, p_from: from, p_to: to }),
       sb.from("zefo_keywords").select("keyword, ranking, local_searches").eq("client_id", client_id).order("ranking", { ascending: true, nullsFirst: false }).limit(30),
+      sb.from("keyword_targets").select("keyword, page_url, intent").eq("client_id", client_id).eq("status", "active"),
     ]);
+    // #3 sync: the team's declared keyword→page targets (from the structure tab).
+    const ktargets = (ktRes.data || []) as any[];
 
     const rows = (oppRows || []) as any[];
     const nearFirstPage = rows.filter((r) => r.position >= 8 && r.position <= 20 && r.impressions >= 30).sort((a, b) => b.impressions - a.impressions).slice(0, 15);
@@ -70,9 +74,16 @@ Deno.serve(async (req) => {
     const zefo = (zefoRes.data || []).filter((z: any) => z.ranking != null && z.ranking > 0);
     const fmt = (arr: any[], f: (x: any) => string) => (arr.length ? arr.map(f).join("\n") : "אין נתונים");
 
+    const targetBlock = ktargets.length
+      ? ktargets.map((t) => `- "${t.keyword}" → ${t.intent === "new_page" ? `עמוד חדש${t.page_url ? ` (${t.page_url})` : ""}` : `חזק את העמוד ${t.page_url || "(לא הוגדר URL)"}`}`).join("\n")
+      : "לא הוגדרו יעדים.";
+
     const context = `לקוח: ${client.name} (דומיין: ${client.domain}). התעלם מביטויי מותג (שם הלקוח/הדומיין).
 הערות: ${client.notes || "אין"}
 תקופה: ${from} עד ${to}
+
+[0] יעדי מילות מפתח שהצוות הגדיר (מקור אמת — כבד תמיד):
+${targetBlock}
 
 [1] ביטויים קרובים לעמוד הראשון (מיקום 8-20, חשיפות 30+):
 (מילה | מיקום | חשיפות | קליקים)
@@ -96,6 +107,7 @@ ${fmt(zefo.slice(0, 15), (z: any) => `- ${z.keyword} | ${z.ranking}`)}`;
 
     const system =
       "אתה מומחה SEO שמכין רשימת פעולות פנימית לצוות (לא ללקוח). על בסיס הנתונים, כתוב המלצות מעשיות, ממוקדות ומתועדפות, בעברית, בלי סימני מרקדאון. " +
+      "חשוב ביותר: כבד תמיד את 'יעדי מילות המפתח' בחלק [0]. אם לביטוי הוגדר עמוד יעד — כל ההמלצות עליו צריכות לכוון לחיזוק אותו עמוד (ולא אחר), וכל עמוד אחר שמדרג על אותו ביטוי יסומן כקניבליזציה לטיפול (איחוד/הפניה/קישור פנימי אל עמוד היעד). אם הוגדר 'עמוד חדש' — המלץ ליצור עמוד ייעודי. " +
       "חלק לארבעה חלקים ברורים עם כותרות: " +
       "1) 'ביטויים קרובים לעמוד הראשון' — לכל ביטוי מרכזי: שיפור תוכן, כותרות ופסקאות סביב הביטוי, שאלות ותשובות, קישורים פנימיים, התאמת כוונת חיפוש. " +
       "2) 'חשיפות גבוהות ו-CTR נמוך' — לכל ביטוי: שיפור כותרת SEO ותיאור Meta (יתרון/מספר/מיקום/מחיר/תשובה ברורה), בדיקה מול מתחרים. " +

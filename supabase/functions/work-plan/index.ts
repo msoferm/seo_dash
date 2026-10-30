@@ -8,6 +8,7 @@
  * reason, sensible defaults are used, so a plan is always produced.
  *
  * Replaces any previous generated plan (source='plan'); manual/upload tasks are untouched.
+ * rev: 2026-10-30a (syncs with keyword_targets — adds a task per declared target not already covered)
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
@@ -90,6 +91,9 @@ Deno.serve(async (req) => {
     const recs = recRes.data || [], audits = auditRes.data || [], pages = pagesRes.data || [], conv = convRes.data || [];
     const forumNew = (forumRes.data || []).length, prospectNew = (prospectRes.data || []).length;
     const pagesNoFaq = pages.filter((p: any) => !p.has_faq).length;
+    // #3 sync: the declared keyword→page targets (from the structure tab).
+    const { data: ktData } = await sb.from("keyword_targets").select("keyword, page_url, intent").eq("client_id", client_id).eq("status", "active");
+    const ktargets = (ktData || []) as any[];
 
     const subs: Sub[] = [];
     const push = (s: Partial<Sub> & { pillar: string; kind: string; title: string; source_type: string; source_ref: string; key: string }) =>
@@ -114,6 +118,17 @@ Deno.serve(async (req) => {
       priority: a.severity === "high" ? "high" : a.severity === "low" ? "low" : "medium",
       writes_text: auditPillar(a.issue || "") === "content",
     });
+
+    // --- #3: ensure every declared keyword target has a task (deduped vs recs already covering it) ---
+    for (const t of ktargets) {
+      const kw = (t.keyword || "").trim(); if (!kw) continue;
+      if (recs.some((r: any) => (r.title || "").includes(kw))) continue; // already covered by a recommendation-derived task
+      if (t.intent === "new_page") {
+        push({ key: `kt:${kw}`, pillar: "traffic", kind: "claude", title: `כתיבת עמוד חדש לביטוי "${kw}"`, details: "הוגדר כיעד לעמוד חדש בלשונית 'אופטימיזציית מבנה ומילות מפתח'.", source_type: "keyword_target", source_ref: kw, page_url: t.page_url || null, priority: "medium", impact: "high", writes_text: true });
+      } else {
+        push({ key: `kt:${kw}`, pillar: "content", kind: "claude", title: `חיזוק עמוד היעד לביטוי "${kw}"`, details: `חזק את עמוד היעד ${t.page_url || "(ללא URL)"} — כותרת/תיאור/תוכן/קישורים פנימיים, ומניעת קניבליזציה.`, source_type: "keyword_target", source_ref: kw, page_url: t.page_url || null, priority: "medium", impact: "high", writes_text: true });
+      }
+    }
 
     // --- Deterministic advisory (always reliable) ---
     let adv = 0;
