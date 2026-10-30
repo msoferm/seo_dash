@@ -72,10 +72,26 @@ function ProposalCard({ cid, p, client }: { cid: number; p: BlogPost; client?: {
   const [srcList, setSrcList] = useState<string[]>(p.sources && p.sources.length ? p.sources : [""]);
   const cleanSources = srcList.map((s) => s.trim()).filter((s) => /^https?:\/\//i.test(s));
 
-  const approve = useMutation({ mutationFn: (mod?: string) => api.approveBlogProposal(p.id, mod), onSuccess: invalidate });
+  // #1b: opt-in internal links — the user picks which site pages to link to (and the anchor).
+  const [ilOpen, setIlOpen] = useState(false);
+  const [ilSel, setIlSel] = useState<api.InternalLink[]>([]);
+  const { data: pages } = useQuery({ queryKey: ["client-pages", cid], queryFn: () => api.listClientPages(cid), enabled: ilOpen });
+  const cleanInternalLinks = ilSel.filter((l) => /^https?:\/\//i.test(l.url));
+  const toggleIl = (url: string) => setIlSel((l) => l.some((x) => x.url === url) ? l.filter((x) => x.url !== url) : [...l, { url, anchor: "" }]);
+  const setIlAnchor = (url: string, anchor: string) => setIlSel((l) => l.map((x) => x.url === url ? { ...x, anchor } : x));
+
+  // #1a: edit the generated sample before publishing it as-is.
+  const [editMode, setEditMode] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editExcerpt, setEditExcerpt] = useState("");
+  const [editBody, setEditBody] = useState("");
+
+  const approve = useMutation({ mutationFn: (mod?: string) => api.approveBlogProposal(p.id, mod, cleanInternalLinks), onSuccess: invalidate });
   const reject = useMutation({ mutationFn: () => api.rejectBlogProposal(p.id), onSuccess: invalidate });
   const markDone = useMutation({ mutationFn: () => api.setBlogPostDone(p.id), onSuccess: invalidate });
-  const sample = useMutation({ mutationFn: () => api.sampleBlog(cid, p.keyword || undefined, cleanSources, modOpen ? modText.trim() : undefined) });
+  const sample = useMutation({ mutationFn: () => api.sampleBlog(cid, p.keyword || undefined, cleanSources, modOpen ? modText.trim() : undefined, cleanInternalLinks), onSuccess: () => setEditMode(false) });
+  const publishEdited = useMutation({ mutationFn: () => api.publishEditedBlog(cid, { title: editTitle, html: editBody, excerpt: editExcerpt, keyword: p.keyword || undefined, proposalId: p.id }), onSuccess: invalidate });
+  const startEdit = () => { if (!sample.data) return; setEditTitle(sample.data.title || ""); setEditExcerpt(sample.data.excerpt || ""); setEditBody(sample.data.body || sample.data.preview || ""); setEditMode(true); };
   const saveSources = useMutation({ mutationFn: () => api.setBlogProposalSources(p.id, cleanSources), onSuccess: invalidate });
   const savedCount = (p.sources || []).length;
 
@@ -105,6 +121,9 @@ function ProposalCard({ cid, p, client }: { cid: number; p: BlogPost; client?: {
         <button className="btn-secondary text-sm py-1.5" onClick={() => setModOpen((o) => !o)}><Pencil size={15} /> בצע עם שינוי</button>
         <button className={`btn-secondary text-sm py-1.5 ${savedCount ? "text-brand-700 border-brand-200 bg-brand-50" : ""}`} onClick={() => setSrcOpen((o) => !o)}>
           <Link2 size={15} /> הוספת מקורות{savedCount ? ` (${savedCount})` : ""}
+        </button>
+        <button className={`btn-secondary text-sm py-1.5 ${cleanInternalLinks.length ? "text-brand-700 border-brand-200 bg-brand-50" : ""}`} onClick={() => setIlOpen((o) => !o)}>
+          <Link2 size={15} /> קישורים פנימיים{cleanInternalLinks.length ? ` (${cleanInternalLinks.length})` : ""}
         </button>
         <button className={`btn-secondary text-sm py-1.5 ${markDone.isSuccess ? "text-emerald-700 border-emerald-200 bg-emerald-50" : ""}`} onClick={() => markDone.mutate()} disabled={markDone.isPending || markDone.isSuccess}>
           {markDone.isPending ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} className={markDone.isSuccess ? "text-emerald-600" : ""} />} בוצע
@@ -143,10 +162,45 @@ function ProposalCard({ cid, p, client }: { cid: number; p: BlogPost; client?: {
         </div>
       )}
 
+      {ilOpen && (
+        <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <p className="text-xs text-slate-500 mb-2">בחר לאילו עמודים באתר לקשר מתוך המאמר (קישורים פנימיים). רק מה שתסמן ישולב — עם ה-URL המדויק. בלי סימון, לא יתווספו קישורים פנימיים כלל.</p>
+          {!pages ? (
+            <div className="text-xs text-slate-400 flex items-center gap-1"><Loader2 size={13} className="animate-spin" /> טוען עמודים...</div>
+          ) : pages.length === 0 ? (
+            <div className="text-xs text-slate-400">לא נמצאו עמודים (צריך נתוני Search Console ללקוח).</div>
+          ) : (
+            <div className="max-h-56 overflow-y-auto divide-y divide-slate-100">
+              {pages.map((pg) => {
+                const sel = ilSel.find((x) => x.url === pg.page);
+                const label = (() => { try { return decodeURIComponent(pg.page.replace(/^https?:\/\/[^/]+/, "")) || pg.page; } catch { return pg.page; } })();
+                return (
+                  <div key={pg.page} className="py-1.5">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" className="h-4 w-4 accent-brand-600 shrink-0" checked={!!sel} onChange={() => toggleIl(pg.page)} />
+                      <span className="text-sm text-slate-700 truncate flex-1" title={pg.page}>{label}</span>
+                      <span className="text-xs text-slate-400 shrink-0">{pg.impressions} חשיפות</span>
+                    </label>
+                    {sel && (
+                      <input className="input text-xs py-1 mt-1 mr-6" placeholder='טקסט עוגן מועדף (אופציונלי — למשל "כתב כמויות")'
+                        value={sel.anchor || ""} onChange={(e) => setIlAnchor(pg.page, e.target.value)} />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {cleanInternalLinks.length > 0 && <div className="text-xs text-emerald-600 mt-2">{cleanInternalLinks.length} קישורים נבחרו — ישולבו ב"צור דוגמה"/"בצע".</div>}
+        </div>
+      )}
+
       {sample.isError && <div className="text-sm text-rose-600 mt-2">{(sample.error as any)?.message}</div>}
-      {sample.data && (
+      {sample.data && !editMode && (
         <div className="mt-3 border border-slate-200 rounded-lg p-3 bg-white">
-          <div className="text-xs text-emerald-600 mb-1">דוגמה — זהו המאמר המלא שייכתב (לא נשמר/פורסם)</div>
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <div className="text-xs text-emerald-600">דוגמה — המאמר המלא שייכתב (לא נשמר/פורסם)</div>
+            <button className="btn-secondary text-xs py-1 px-2" onClick={startEdit}><Pencil size={13} /> ערוך והוסף טקסט משלך</button>
+          </div>
           <div className="font-semibold text-slate-900 text-lg">{sample.data.title}</div>
           {sample.data.keyword && <div className="text-xs text-slate-400">מילת מפתח: {sample.data.keyword}</div>}
           {sample.data.excerpt && <div className="text-sm text-slate-500 italic mt-1">{sample.data.excerpt}</div>}
@@ -158,6 +212,25 @@ function ProposalCard({ cid, p, client }: { cid: number; p: BlogPost; client?: {
           ) : (
             <div className="text-sm text-slate-700 whitespace-pre-wrap mt-2">{sample.data.preview || "—"}</div>
           )}
+        </div>
+      )}
+      {sample.data && editMode && (
+        <div className="mt-3 border border-brand-200 rounded-lg p-3 bg-white">
+          <div className="text-xs text-brand-600 mb-2">עריכה — הוסף/שנה טקסט כרצונך (הגוף ב-HTML: &lt;h2&gt;, &lt;p&gt;, &lt;ul&gt;&lt;li&gt;). לחיצה על "פרסם" תעלה בדיוק את מה שכאן.</div>
+          <label className="block text-xs text-slate-500 mb-1">כותרת</label>
+          <input className="input mb-2" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
+          <label className="block text-xs text-slate-500 mb-1">תיאור מטא (Excerpt)</label>
+          <input className="input mb-2" value={editExcerpt} onChange={(e) => setEditExcerpt(e.target.value)} />
+          <label className="block text-xs text-slate-500 mb-1">גוף המאמר (HTML)</label>
+          <textarea className="input font-mono text-xs leading-relaxed" rows={16} value={editBody} onChange={(e) => setEditBody(e.target.value)} />
+          <div className="flex items-center gap-2 mt-2 flex-wrap">
+            <button className="btn-primary text-sm py-1.5" onClick={() => publishEdited.mutate()} disabled={publishEdited.isPending || !editTitle.trim() || editBody.trim().length < 40}>
+              {publishEdited.isPending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} פרסם את הגרסה הזו
+            </button>
+            <button className="btn-secondary text-sm py-1.5" onClick={() => setEditMode(false)}><X size={15} /> בטל עריכה</button>
+            {publishEdited.isSuccess && <span className="text-sm text-emerald-600">פורסם ✓ {publishEdited.data?.url && <a href={publishEdited.data.url} target="_blank" rel="noreferrer" className="underline">צפה</a>}</span>}
+            {publishEdited.isError && <span className="text-sm text-rose-600">{(publishEdited.error as any)?.message}</span>}
+          </div>
         </div>
       )}
       {approve.isError && <div className="text-sm text-rose-600 mt-2">{(approve.error as any)?.message}</div>}

@@ -793,8 +793,10 @@ const PILLAR_AREA: Record<string, string> = {
   authority: "סמכות וקישורים", conversions: "המרות ו-UX",
 };
 
-/** Unified log of everything done (applied recs, applied audit fixes, completed manual tasks). */
-export async function getActivityLog(clientId: number): Promise<ActivityEntry[]> {
+/** Unified log of everything done (applied recs, applied audit fixes, completed manual tasks).
+ * #2: pass from/to (YYYY-MM-DD) to keep only actions whose done-date falls in that range
+ * (a month "folder"); dateless actions are kept so nothing is silently dropped. */
+export async function getActivityLog(clientId: number, from?: string, to?: string): Promise<ActivityEntry[]> {
   const [recsR, auditsR, tasksR, impact] = await Promise.all([
     supabase.from("recommendations").select("id, type, title, page, applied_note, applied_at").eq("client_id", clientId).in("status", ["applied", "done"]),
     supabase.from("audit_issues").select("id, issue, page, applied_note, created_at").eq("client_id", clientId).eq("status", "applied"),
@@ -820,7 +822,9 @@ export async function getActivityLog(clientId: number): Promise<ActivityEntry[]>
     if (t.source_type === "recommendation" || t.source_type === "audit") continue; // covered above
     out.push({ id: `task:${t.id}`, date: t.done_at || t.due_date, area: PILLAR_AREA[t.category || ""] || "משימה", title: t.title, page: t.page_url, note: t.note, kind: "task" });
   }
-  return out.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const sorted = out.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  if (from && to) return sorted.filter((e) => { if (!e.date) return true; const d = e.date.slice(0, 10); return d >= from && d <= to; });
+  return sorted;
 }
 
 // ===== All-pages master =====
@@ -829,6 +833,31 @@ export async function getPageStats(clientId: number, from: string, to: string): 
   const { data, error } = await supabase.rpc("gsc_page_stats", { p_client_id: clientId, p_from: from, p_to: to });
   if (error) throw error;
   return (data || []) as PageStat[];
+}
+
+// ===== #3: Keyword/page structure (target map) — "אופטימיזציית מבנה ומילות מפתח" =====
+export interface KeywordTarget { id: number; keyword: string; page_url: string | null; is_primary: boolean; intent: string; status: string; notes: string | null }
+export interface KwPageRow { page: string; term: string; clicks: number; impressions: number; ctr: number; position: number }
+
+/** GSC page↔query map (which keyword ranks on which page) for the full-picture view. */
+export async function getKeywordPageMap(clientId: number, from: string, to: string): Promise<KwPageRow[]> {
+  const { data, error } = await supabase.rpc("gsc_page_query_map", { p_client_id: clientId, p_from: from, p_to: to });
+  if (error) throw error;
+  return (data || []).map((r: any) => ({ page: r.page, term: r.term, clicks: Number(r.clicks || 0), impressions: Number(r.impressions || 0), ctr: Number(r.ctr || 0), position: Number(r.position || 0) }));
+}
+export async function listKeywordTargets(clientId: number): Promise<KeywordTarget[]> {
+  const { data, error } = await supabase.from("keyword_targets").select("*").eq("client_id", clientId).order("keyword");
+  if (error) throw error;
+  return (data || []) as KeywordTarget[];
+}
+export async function upsertKeywordTarget(clientId: number, t: { keyword: string; page_url?: string | null; is_primary?: boolean; intent?: string; status?: string; notes?: string | null }): Promise<void> {
+  const row = { client_id: clientId, keyword: t.keyword, page_url: t.page_url ?? null, is_primary: t.is_primary ?? true, intent: t.intent || (t.page_url ? "strengthen" : "new_page"), status: t.status || "active", notes: t.notes ?? null, updated_at: new Date().toISOString() };
+  const { error } = await supabase.from("keyword_targets").upsert(row, { onConflict: "client_id,keyword" });
+  if (error) throw error;
+}
+export async function deleteKeywordTarget(id: number): Promise<void> {
+  const { error } = await supabase.from("keyword_targets").delete().eq("id", id);
+  if (error) throw error;
 }
 
 // Phase 3 — SEO tools
@@ -961,8 +990,8 @@ export async function proposeBlog(clientId: number): Promise<{ keyword: string; 
 }
 
 /** Semi-auto step 2: approve a proposal → write & publish it. */
-export async function approveBlogProposal(proposalId: number, modification?: string): Promise<{ title: string; url: string; status: string; keyword: string }> {
-  return await invokeFn("blog-approve", { proposal_id: proposalId, modification: modification || undefined });
+export async function approveBlogProposal(proposalId: number, modification?: string, internalLinks?: InternalLink[]): Promise<{ title: string; url: string; status: string; keyword: string }> {
+  return await invokeFn("blog-approve", { proposal_id: proposalId, modification: modification || undefined, internal_links: internalLinks && internalLinks.length ? internalLinks : undefined });
 }
 
 export async function rejectBlogProposal(id: number): Promise<void> {
@@ -991,8 +1020,22 @@ export async function publishBlogNow(clientId: number): Promise<{ title: string;
 }
 
 /** Generate a SAMPLE article draft (no publishing). Returns the title + a preview. */
-export async function sampleBlog(clientId: number, keyword?: string, sources?: string[], modification?: string): Promise<{ title: string; keyword: string; preview?: string; body?: string; excerpt?: string; image?: boolean }> {
-  return await invokeFn("blog-publish", { client_id: clientId, dry_run: true, keyword: keyword || undefined, sources: sources && sources.length ? sources : undefined, modification: modification || undefined });
+export interface InternalLink { url: string; anchor?: string }
+
+export async function sampleBlog(clientId: number, keyword?: string, sources?: string[], modification?: string, internalLinks?: InternalLink[]): Promise<{ title: string; keyword: string; preview?: string; body?: string; excerpt?: string; image?: boolean }> {
+  return await invokeFn("blog-publish", { client_id: clientId, dry_run: true, keyword: keyword || undefined, sources: sources && sources.length ? sources : undefined, modification: modification || undefined, internal_links: internalLinks && internalLinks.length ? internalLinks : undefined });
+}
+
+/** #1a: publish an article the team edited manually (exact title/body), without regenerating. */
+export async function publishEditedBlog(clientId: number, f: { title: string; html: string; excerpt?: string; keyword?: string; proposalId?: number }): Promise<{ title: string; url: string; status: string; keyword: string }> {
+  return await invokeFn("blog-publish-edited", { client_id: clientId, title: f.title, html: f.html, excerpt: f.excerpt || undefined, keyword: f.keyword || undefined, proposal_id: f.proposalId || undefined });
+}
+
+/** #1b: the client's known site pages (from GSC), most-visible first, for the internal-links picker. */
+export async function listClientPages(clientId: number): Promise<{ page: string; impressions: number; clicks: number }[]> {
+  const { data, error } = await supabase.rpc("client_pages", { p_client_id: clientId });
+  if (error) throw error;
+  return (data || []).map((r: any) => ({ page: r.page, impressions: Number(r.impressions || 0), clicks: Number(r.clicks || 0) }));
 }
 
 /** Save the reference source URLs the writer must use for a specific proposal. */

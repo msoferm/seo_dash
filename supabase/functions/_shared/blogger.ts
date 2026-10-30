@@ -107,7 +107,9 @@ async function fetchSourceText(url: string): Promise<string> {
   } catch { return ""; }
 }
 
-export async function writeAndPublish(sb: any, clientId: number, keyword: string, opts: { proposalId?: number; dryRun?: boolean; modification?: string; sources?: string[] } = {}): Promise<PublishResult> {
+export interface InternalLink { url: string; anchor?: string }
+
+export async function writeAndPublish(sb: any, clientId: number, keyword: string, opts: { proposalId?: number; dryRun?: boolean; modification?: string; sources?: string[]; internalLinks?: InternalLink[] } = {}): Promise<PublishResult> {
   const { data: client } = await sb.from("clients").select("*").eq("id", clientId).maybeSingle();
   if (!client) throw new Error("לקוח לא נמצא");
   const { data: cw } = await sb.from("client_wordpress").select("*").eq("client_id", clientId).maybeSingle();
@@ -136,13 +138,23 @@ export async function writeAndPublish(sb: any, clientId: number, keyword: string
         : "אורך: מאמר סופר-איכותי, מעמיק ומקיף, 1100-1600 מילים, עם כיסוי רחב של הנושא. ")
     : "600-900 מילים. ";
 
+  // #1b: internal links are now OPT-IN. The writer links ONLY to pages the user explicitly
+  // chose (with their exact URLs) — and adds no internal links at all otherwise.
+  const internalLinks = (opts.internalLinks || []).filter((l) => l && typeof l.url === "string" && /^https?:\/\//i.test(l.url)).slice(0, 8);
+  const linksRule = internalLinks.length
+    ? "שלב במאמר בדיוק את הקישורים הפנימיים הבאים — ורק אותם. עגן כל קישור על טקסט עוגן טבעי ורלוונטי בתוך המשפט, והשתמש בכתובת ה-URL המדויקת כפי שסופקה. אל תמציא קישורים פנימיים אחרים ואל תקשר לעמוד הבית. "
+    : "אל תוסיף קישורים פנימיים כלל (אלא אם סופקו במפורש למטה). ";
+  const internalLinksBlock = internalLinks.length
+    ? internalLinks.map((l) => `- ${l.anchor ? `עוגן מועדף "${l.anchor}" → ` : ""}${l.url}`).join("\n")
+    : "";
+
   const system =
     "אתה כותב תוכן SEO מקצועי בעברית לבלוג עסקי. כתוב מאמר איכותי, מקורי ומועיל סביב מילת המפתח — כותרת ממוקדת-SEO, מבנה H2/H3, פסקאות ורשימות. " + lengthRule +
     "שלב את מילת המפתח באופן טבעי ושזור מונחים קשורים מהרשימה שסופקה. אל תמציא עובדות/מספרים/מחירים שאינך יכול לאמת. " +
     (hasSources ? "חובה: התבסס על חומרי המקור שסופקו למטה — קח מהם רעיונות, נקודות, זוויות וטקסטים, שלב אותם בצורה מקורית (בלי העתקה מילולית) והתייחס לכל אחד מהמקורות. " : "") +
     (instructions ? `הנחיות חובה של הצוות (כבד תמיד): ${instructions}\n` : "") +
     (opts.modification && opts.modification.trim() ? `שינוי/הנחיה נוספת לכתיבה הספציפית הזו (חובה לכבד): ${opts.modification.trim()}\n` : "") +
-    "אם התבקשת לשים קישור פנימי לעמוד מסוים — השתמש בכתובת ה-URL המדויקת שסופקה ועגן אותו על טקסט העוגן הרלוונטי (למשל על הביטוי 'כתב כמויות'), ולא על עמוד הבית ולא על טקסט כללי. " +
+    linksRule +
     "החזר בפורמט המדויק (בלי טקסט נוסף):\n" +
     "TITLE: <כותרת SEO, עד 60 תווים, כוללת את מילת המפתח>\n" +
     "EXCERPT: <תיאור מטא לקידום אורגני, 120-155 תווים, כולל את מילת המפתח>\n" +
@@ -155,6 +167,7 @@ export async function writeAndPublish(sb: any, clientId: number, keyword: string
     `מילת מפתח יעד: "${keyword}".\n` +
     (related.length ? `מילות מפתח קשורות (ZEFO): ${related.join(" | ")}.\n` : "") +
     (hasSources ? `\n=== חומרי מקור שעליך להתבסס עליהם (חובה) ===\n${sourcesBlock}\n=== סוף חומרי המקור ===\n` : "") +
+    (internalLinks.length ? `\n=== קישורים פנימיים לשילוב (השתמש בכתובות המדויקות, ורק בהן) ===\n${internalLinksBlock}\n=== סוף הקישורים הפנימיים ===\n` : "") +
     `כתוב מאמר בלוג שיווקי-מקצועי.`;
 
   const resp = await callClaude({ model: DEFAULT_MODEL, max_tokens: hasSources ? 12000 : 8000, system, messages: [{ role: "user", content: userMsg }] });
@@ -171,14 +184,22 @@ export async function writeAndPublish(sb: any, clientId: number, keyword: string
   // not just a truncated opening that looks like an outline.
   if (opts.dryRun) return { title, url: "(dry-run)", status: "dry", keyword, image: !!imageQuery, excerpt, body: html, preview: html.slice(0, 350) };
 
+  return await wpPublish(sb, clientId, cw, { title, html, excerpt, keyword, imageQuery, imagePrompt, imageAlt, proposalId: opts.proposalId });
+}
+
+// Shared WordPress publishing step: fetch a featured image, create the post, set SEO meta,
+// and record the result. Used by both the AI writer (writeAndPublish) and the manual
+// "publish this edited version" path (publishEdited).
+async function wpPublish(sb: any, clientId: number, cw: any, f: { title: string; html: string; excerpt: string; keyword: string; imageQuery?: string; imagePrompt?: string; imageAlt?: string; proposalId?: number }): Promise<PublishResult> {
+  const { title, html, excerpt, keyword } = f;
   const site = normalizeSite(cw.site_url);
   const auth = basicAuth(cw.username, cw.app_password);
   let featuredMedia: number | null = null;
   try {
     // Prefer REAL stock photos (Pexels); AI image only as a fallback when Pexels is unavailable.
-    let img = await fetchPexels(imageQuery || keyword);
-    if (!img) img = await fetchAiImage(imagePrompt || `${keyword}, realistic professional photograph`);
-    if (img) featuredMedia = await uploadMedia(site, auth, img, imageAlt || title);
+    let img = await fetchPexels(f.imageQuery || keyword);
+    if (!img) img = await fetchAiImage(f.imagePrompt || `${keyword}, realistic professional photograph`);
+    if (img) featuredMedia = await uploadMedia(site, auth, img, f.imageAlt || title);
   } catch { /* image best-effort */ }
 
   const postBody: any = { title, content: html, excerpt, status: cw.mode };
@@ -187,12 +208,12 @@ export async function writeAndPublish(sb: any, clientId: number, keyword: string
   try {
     res = await fetch(`${site}/wp-json/wp/v2/posts`, { method: "POST", headers: { Authorization: auth, "Content-Type": "application/json" }, body: JSON.stringify(postBody) });
   } catch (e) {
-    await recordError(sb, clientId, title, keyword, `שגיאת רשת ל-WordPress: ${(e as Error).message}`, opts.proposalId);
+    await recordError(sb, clientId, title, keyword, `שגיאת רשת ל-WordPress: ${(e as Error).message}`, f.proposalId);
     throw new Error(`לא ניתן להגיע ל-WordPress בכתובת ${site}`);
   }
   if (!res.ok) {
     const body = (await res.text()).slice(0, 300);
-    await recordError(sb, clientId, title, keyword, `WordPress ${res.status}: ${body}`, opts.proposalId);
+    await recordError(sb, clientId, title, keyword, `WordPress ${res.status}: ${body}`, f.proposalId);
     throw new Error(`WordPress דחה את הבקשה (${res.status}).`);
   }
   const post = await res.json();
@@ -201,10 +222,21 @@ export async function writeAndPublish(sb: any, clientId: number, keyword: string
   } catch { /* meta best-effort */ }
 
   const row = { title, keyword, wp_post_id: post.id, url: post.link, status: post.status, error: null };
-  if (opts.proposalId) await sb.from("blog_posts").update(row).eq("id", opts.proposalId);
+  if (f.proposalId) await sb.from("blog_posts").update(row).eq("id", f.proposalId);
   else await sb.from("blog_posts").insert({ client_id: clientId, ...row });
   await sb.from("client_wordpress").update({ last_published_at: new Date().toISOString() }).eq("client_id", clientId);
   return { title, url: post.link, status: post.status, keyword, image: !!featuredMedia };
+}
+
+// #1a: publish a user-EDITED article (title/body the team adjusted after "צור דוגמה"),
+// exactly as given, without regenerating it.
+export async function publishEdited(sb: any, clientId: number, f: { title: string; html: string; excerpt?: string; keyword?: string; imageQuery?: string; proposalId?: number }): Promise<PublishResult> {
+  const { data: cw } = await sb.from("client_wordpress").select("*").eq("client_id", clientId).maybeSingle();
+  if (!cw) throw new Error("הלקוח לא מחובר ל-WordPress");
+  const title = (f.title || "").trim();
+  const html = (f.html || "").trim();
+  if (!title || html.length < 40) throw new Error("חסר תוכן לפרסום (כותרת או גוף המאמר).");
+  return await wpPublish(sb, clientId, cw, { title, html, excerpt: (f.excerpt || "").trim(), keyword: (f.keyword || "").trim(), imageQuery: f.imageQuery, proposalId: f.proposalId });
 }
 
 // ---------- full-auto (pick + write + publish) ----------
@@ -215,11 +247,11 @@ export async function publishForClient(sb: any, clientId: number, opts: { dryRun
 }
 
 // ---------- approve a proposal → write + publish ----------
-export async function approveProposal(sb: any, proposalId: number, modification?: string): Promise<PublishResult> {
+export async function approveProposal(sb: any, proposalId: number, modification?: string, internalLinks?: InternalLink[]): Promise<PublishResult> {
   const { data: p } = await sb.from("blog_posts").select("*").eq("id", proposalId).maybeSingle();
   if (!p) throw new Error("ההצעה לא נמצאה");
   if (p.status !== "proposed") throw new Error("ההצעה כבר טופלה");
-  return await writeAndPublish(sb, p.client_id, p.keyword, { proposalId, modification, sources: (p.sources as string[]) || undefined });
+  return await writeAndPublish(sb, p.client_id, p.keyword, { proposalId, modification, sources: (p.sources as string[]) || undefined, internalLinks });
 }
 
 /** Generate a featured image with AI (Pollinations — free, no API key). */

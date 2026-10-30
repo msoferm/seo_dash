@@ -20,6 +20,11 @@ function lastFullMonth(): { from: string; to: string } {
   return { from: fmt(first), to: fmt(last) };
 }
 
+/** First and last day of a given year+month (monthIdx 0-11). */
+function monthBounds(year: number, monthIdx: number): { from: string; to: string } {
+  return { from: fmt(new Date(year, monthIdx, 1)), to: fmt(new Date(year, monthIdx + 1, 0)) };
+}
+
 const HE_MONTHS = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
 
 export function reportLabel(r: Pick<Report, "period_from" | "period_to" | "title">): string {
@@ -42,6 +47,14 @@ export default function ReportsPage() {
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
   const [creating, setCreating] = useState(false);
+  // #2: pick the "folder" by year + month (with optional day tweaks). Setting month/year
+  // snaps the from/to range to that month's bounds.
+  const initDate = new Date(initial.from + "T00:00:00");
+  const [year, setYear] = useState(initDate.getFullYear());
+  const [month, setMonth] = useState(initDate.getMonth());
+  const nowYear = new Date().getFullYear();
+  const yearsList = [nowYear + 1, nowYear, nowYear - 1, nowYear - 2, nowYear - 3];
+  const applyMonth = (y: number, m: number) => { setYear(y); setMonth(m); const b = monthBounds(y, m); setFrom(b.from); setTo(b.to); };
 
   const { data: client } = useQuery({ queryKey: ["client", cid], queryFn: () => api.getClient(cid), enabled: !!cid });
   const { data: reports, isLoading } = useQuery({
@@ -49,7 +62,7 @@ export default function ReportsPage() {
     queryFn: () => api.listReports(cid),
     enabled: !!cid,
   });
-  const { data: activity } = useQuery({ queryKey: ["activity", cid], queryFn: () => api.getActivityLog(cid), enabled: !!cid });
+  const { data: activity } = useQuery({ queryKey: ["activity", cid, from, to], queryFn: () => api.getActivityLog(cid, from, to), enabled: !!cid });
   const [actOpen, setActOpen] = useState(true);
   const catForArea = (area: string): string =>
     /קישור/.test(area) ? "קישורים"
@@ -110,14 +123,15 @@ export default function ReportsPage() {
     },
   });
 
-  // Latest report + its items — to show which actions are already in the report (green ✓)
-  // and to add a single action to it (#2b).
+  // The report this month's actions belong to: the folder matching the selected period,
+  // else the newest report. Actions in the preview are already scoped to [from,to] (#2).
   const latestReport = (reports || [])[0];
-  const { data: latestItems } = useQuery({ queryKey: ["report-items", latestReport?.id], queryFn: () => api.listReportItems(latestReport!.id), enabled: !!latestReport });
+  const targetReport = (reports || []).find((r) => r.period_from === from && r.period_to === to) || latestReport;
+  const { data: latestItems } = useQuery({ queryKey: ["report-items", targetReport?.id], queryFn: () => api.listReportItems(targetReport!.id), enabled: !!targetReport });
   const inReport = new Set((latestItems || []).filter((it) => it.source_ref).map((it) => `${it.source_type}:${it.source_ref}`));
   const addOne = useMutation({
-    mutationFn: (e: api.ActivityEntry) => api.addActivityToReport(latestReport!.id, cid, e),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["report-items", latestReport?.id] }),
+    mutationFn: (e: api.ActivityEntry) => api.addActivityToReport(targetReport!.id, cid, e),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["report-items", targetReport?.id] }),
   });
 
   // Month filter for the saved-reports list (#2a).
@@ -190,6 +204,18 @@ export default function ReportsPage() {
           </h3>
           <div className="flex flex-wrap items-end gap-3">
             <div>
+              <label className="block text-xs text-slate-500 mb-1">חודש</label>
+              <select className="input" value={month} onChange={(e) => applyMonth(year, Number(e.target.value))}>
+                {HE_MONTHS.map((mn, i) => <option key={i} value={i}>{mn}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">שנה</label>
+              <select className="input" value={year} onChange={(e) => applyMonth(Number(e.target.value), month)}>
+                {yearsList.map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+            <div>
               <label className="block text-xs text-slate-500 mb-1">מתאריך</label>
               <input type="date" className="input" value={from} max={to} onChange={(e) => setFrom(e.target.value)} />
             </div>
@@ -202,7 +228,7 @@ export default function ReportsPage() {
               {create.isPending ? "מסנכרן נתונים וכותב דוח..." : "צור דוח (קלוד מנסח)"}
             </button>
           </div>
-          <p className="text-xs text-slate-400 mt-2">ברירת המחדל: החודש המלא האחרון. קלוד ינסח טיוטת סיכום והמלצות שתוכל לערוך בדוח עצמו.</p>
+          <p className="text-xs text-slate-400 mt-2">בחר חודש ושנה (או כוונן ידנית את הימים). רק הפעולות שבוצעו בטווח התאריכים ייכנסו לדוח של חודש זה. קלוד ינסח טיוטת סיכום והמלצות שתוכל לערוך.</p>
           {create.isError && <div className="text-sm text-rose-600 mt-2">שגיאה: {(create.error as any)?.message}</div>}
         </div>
       )}
@@ -210,12 +236,12 @@ export default function ReportsPage() {
       {/* Completed actions preview (before/independent of a report) */}
       <div className="card mb-6">
         <button className="w-full flex items-center justify-between gap-2 text-right" onClick={() => setActOpen((o) => !o)}>
-          <h3 className="font-semibold flex items-center gap-2 text-slate-800"><ClipboardCheck size={18} className="text-brand-600" /> פעולות שבוצעו <span className="text-xs font-normal text-slate-400">({(activity || []).length}) — סקירה לפני יצירת דוח</span></h3>
+          <h3 className="font-semibold flex items-center gap-2 text-slate-800"><ClipboardCheck size={18} className="text-brand-600" /> פעולות שבוצעו <span className="text-xs font-normal text-slate-400">({(activity || []).length}) — בטווח {from} – {to}</span></h3>
           {actOpen ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
         </button>
         {actOpen && (
           (activity || []).length === 0 ? (
-            <p className="text-slate-400 text-sm mt-2">עדיין לא בוצעו פעולות. ברגע שתסמן "בוצע" או "בצע" במערכת — הן יופיעו כאן אוטומטית.</p>
+            <p className="text-slate-400 text-sm mt-2">אין פעולות בטווח התאריכים הזה. בחר חודש אחר ב"צור דוח חדש", או סמן "בוצע"/"בצע" במערכת — והן יופיעו כאן.</p>
           ) : (
             <div className="space-y-4 mt-3">
               {actGroups.map(([c, items]) => (
@@ -236,8 +262,8 @@ export default function ReportsPage() {
                         </div>
                         {added
                           ? <span className="text-xs text-emerald-600 inline-flex items-center gap-1 shrink-0 no-print"><Check size={13} /> בדוח</span>
-                          : <button className="btn-secondary text-xs py-1 px-2 shrink-0 no-print" disabled={!latestReport || (addOne.isPending && (addOne.variables as any)?.id === e.id)}
-                              title={latestReport ? "הוסף פעולה זו לדוח האחרון" : "אין דוח — צור דוח קודם"} onClick={() => addOne.mutate(e)}>
+                          : <button className="btn-secondary text-xs py-1 px-2 shrink-0 no-print" disabled={!targetReport || (addOne.isPending && (addOne.variables as any)?.id === e.id)}
+                              title={targetReport ? "הוסף פעולה זו לדוח של חודש זה" : "אין דוח לחודש זה — צור דוח קודם"} onClick={() => addOne.mutate(e)}>
                               {addOne.isPending && (addOne.variables as any)?.id === e.id ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} הוסף לדוח
                             </button>}
                       </li>
@@ -245,7 +271,7 @@ export default function ReportsPage() {
                   </ul>
                 </div>
               ))}
-              <p className="text-xs text-slate-400">הפעולות נכנסות אוטומטית לדוח האחרון. לעריכה/איחוד/שיפור הסבר — פתח את הדוח.</p>
+              <p className="text-xs text-slate-400">הפעולות שבטווח נכנסות לדוח של אותו חודש{targetReport ? ` (${reportLabel(targetReport)})` : ""}. לעריכה/איחוד/שיפור הסבר — פתח את הדוח.</p>
             </div>
           )
         )}

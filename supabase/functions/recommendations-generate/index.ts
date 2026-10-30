@@ -4,7 +4,7 @@
  * title/meta, improve-page, new-content, cannibalization — each scored with an estimated
  * number of new monthly visits, potential, and effort. Replaces the client's PENDING
  * recommendations; keeps ones already applied/ignored/done (and won't re-suggest them).
- * rev: 2026-10-29a (weak-position terms with an existing ranking page → "strengthen page", not "new content")
+ * rev: 2026-10-30a (syncs with keyword_targets: declared target page steers strengthen/new/cannibalization)
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
@@ -58,6 +58,11 @@ Deno.serve(async (req) => {
       if ((r.impressions || 0) >= 20) { const s = termPages.get(r.term) || new Set(); s.add(r.page); termPages.set(r.term, s); }
     }
 
+    // #3 sync: the team's declared keyword→page targets steer every recommendation.
+    const { data: ktargets } = await sb.from("keyword_targets").select("keyword, page_url, intent, status").eq("client_id", client_id).eq("status", "active");
+    const targetByTerm = new Map<string, { page: string | null; intent: string }>();
+    for (const t of (ktargets || []) as any[]) targetByTerm.set(t.keyword, { page: t.page_url || null, intent: t.intent });
+
     const recs: any[] = [];
     const push = (rec: any) => {
       const dedupe_key = `${rec.type}|${rec.page || ""}|${rec.keyword || ""}`;
@@ -68,18 +73,21 @@ Deno.serve(async (req) => {
 
     for (const o of (opps || []) as any[]) {
       const term = o.term; const pos = o.position; const impr = o.impressions; const ctr = o.ctr;
-      const page = termBestPage.get(term)?.page || null;
+      const target = targetByTerm.get(term);
+      // Prefer the team's declared target page for every recommendation on this term.
+      const page = target?.page || termBestPage.get(term)?.page || null;
       const imprM = monthly(impr);
 
       // Cannibalization
       const pagesForTerm = termPages.get(term);
       if (pagesForTerm && pagesForTerm.size >= 2) {
+        const targetLabel = target?.page ? `העמוד שהוגדר כיעד (${target.page})` : `עמוד ראשי אחד`;
         push({
           type: "cannibalization", source: "gsc", page, keyword: term,
           title: `קניבליזציה: ${term}`,
           opportunity: `הביטוי "${term}" מדורג על ${pagesForTerm.size} עמודים (${impr} חשיפות, מיקום ${pos}).`,
           whats_missing: "פיצול כוח בין כמה עמודים על אותה כוונת חיפוש.",
-          action: `לבחור עמוד ראשי אחד ל"${term}", למקד בו את התוכן, ולחזק אליו קישורים פנימיים מהעמודים האחרים (או להפנות).`,
+          action: `למקד את "${term}" ב${targetLabel}, ולחזק אליו קישורים פנימיים מהעמודים האחרים (או להפנות אותם).`,
           potential: "medium", est_visits: Math.round(imprM * 0.02), effort: "medium", confidence: "medium",
           score: impr * 0.5,
         });
@@ -119,25 +127,31 @@ Deno.serve(async (req) => {
       // risks cannibalization). Only when no page ranks at all do we propose new content.
       if (impr >= 25 && pos > 20) {
         const best = termBestPage.get(term);
-        const hasRankingPage = !!(best && best.page && best.impressions >= 5);
-        if (hasRankingPage) {
+        // Decide strengthen-vs-new, honoring the declared target first:
+        //  target page set        → strengthen that page
+        //  target = new_page       → new content (the team decided it needs its own page)
+        //  no target, page ranks   → strengthen the existing ranking page
+        //  no target, nothing ranks→ new content
+        const strengthenPage = target?.page || (target ? null : (best && best.page && best.impressions >= 5 ? best.page : null));
+        const wantNew = target ? !target.page : !(best && best.page && best.impressions >= 5);
+        if (!wantNew && strengthenPage) {
           const est = Math.max(0, Math.round(imprM * expectedCtr(10) * 0.5));
           push({
-            type: "improve_page", source: "gsc", page: best!.page, keyword: term,
+            type: "improve_page", source: "gsc", page: strengthenPage, keyword: term,
             title: `חיזוק עמוד קיים: ${term}`,
-            opportunity: `"${term}" מקבל ${impr} חשיפות אך מדורג חלש (מיקום ${pos}). כבר יש עמוד שמדרג על הביטוי (${best!.impressions} חשיפות) — עדיף לחזק אותו מאשר לכתוב מאמר מתחרה.`,
-            whats_missing: "העמוד הקיים לא ממוקד/מקיף מספיק סביב כוונת החיפוש כדי לעלות בדירוג.",
-            action: `לחזק את העמוד הקיים: שכתוב כותרת SEO ותיאור מטא מזמינים יותר, הרחבת התוכן ומענה מלא לכוונת החיפוש של "${term}", קישורים פנימיים עם טקסט עוגן מדויק, ומניעת קניבליזציה מעמודים אחרים.`,
+            opportunity: `"${term}" מקבל ${impr} חשיפות אך מדורג חלש (מיקום ${pos}). ${target?.page ? "זהו עמוד היעד שהגדרת — " : "כבר יש עמוד שמדרג על הביטוי — "}עדיף לחזק אותו מאשר לכתוב מאמר מתחרה.`,
+            whats_missing: "העמוד לא ממוקד/מקיף מספיק סביב כוונת החיפוש כדי לעלות בדירוג.",
+            action: `לחזק את העמוד: שכתוב כותרת SEO ותיאור מטא מזמינים יותר, הרחבת התוכן ומענה מלא לכוונת החיפוש של "${term}", קישורים פנימיים עם טקסט עוגן מדויק, ומניעת קניבליזציה מעמודים אחרים.`,
             potential: potentialOf(est), est_visits: est, effort: "medium", confidence: "medium",
             score: est * 1.1,
           });
         } else {
           const est = Math.max(0, Math.round(imprM * expectedCtr(7) * 0.4));
           push({
-            type: "new_content", source: "gsc", page: null, keyword: term,
+            type: "new_content", source: "gsc", page: target?.page || null, keyword: term,
             title: `תוכן חדש: ${term}`,
-            opportunity: `"${term}" מקבל ${impr} חשיפות אך אין באתר עמוד שמדרג על הביטוי — פער תוכן אמיתי.`,
-            whats_missing: "אין עמוד ייעודי שעונה על כוונת החיפוש (אף עמוד לא נמצא בתוצאות עבור הביטוי).",
+            opportunity: target ? `"${term}" הוגדר כיעד לעמוד חדש (${impr} חשיפות, מיקום ${pos}).` : `"${term}" מקבל ${impr} חשיפות אך אין באתר עמוד שמדרג על הביטוי — פער תוכן אמיתי.`,
+            whats_missing: "אין עמוד ייעודי שעונה על כוונת החיפוש.",
             action: `ליצור עמוד/מאמר ייעודי ומקיף ל"${term}".`,
             potential: potentialOf(est), est_visits: est, effort: "high", confidence: "low",
             score: est * 0.8,

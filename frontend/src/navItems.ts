@@ -1,6 +1,6 @@
 import {
   BarChart3, Search, Target, HelpCircle, MessageSquare, ClipboardList, FileText, Sparkles,
-  LayoutList, Activity, ClipboardCheck, Upload, Wand2, Radar, Stethoscope, Newspaper,
+  LayoutList, Activity, ClipboardCheck, Upload, Wand2, Radar, Stethoscope, Newspaper, Network,
 } from "lucide-react";
 
 export interface NavItemDef { key: string; label: string; suffix: string; icon: any }
@@ -14,6 +14,7 @@ export const CLIENT_NAV: NavItemDef[] = [
   { key: "chat", label: "צ׳אט עם קלוד", suffix: "/chat", icon: MessageSquare },
   { key: "tasks", label: "לוח משימות", suffix: "/tasks", icon: ClipboardList },
   { key: "reports", label: "דוחות קידום", suffix: "/reports", icon: FileText },
+  { key: "structure", label: "אופטימיזציית מבנה ומילות מפתח", suffix: "/structure", icon: Network },
   { key: "engine", label: "מנוע המלצות", suffix: "/engine", icon: Sparkles },
   { key: "pages", label: "עמודים", suffix: "/pages", icon: LayoutList },
   { key: "impact", label: "מעקב השפעה", suffix: "/impact", icon: Activity },

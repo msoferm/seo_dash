@@ -27,16 +27,21 @@ Deno.serve(async (req) => {
     const { report_id } = await req.json();
     if (!report_id) return errorResponse("חסר report_id", 400);
 
-    const { data: report } = await sb.from("reports").select("id, client_id").eq("id", report_id).maybeSingle();
+    const { data: report } = await sb.from("reports").select("id, client_id, period_from, period_to").eq("id", report_id).maybeSingle();
     if (!report) return errorResponse("הדוח לא נמצא", 404);
     const client_id = report.client_id;
     const { data: client } = await sb.from("clients").select("name, domain, notes").eq("id", client_id).maybeSingle();
 
+    // #2: only actions whose done-date falls inside this report's period belong in it.
+    // Dateless actions are kept (we can't place them, and we never silently drop).
+    const pf: string | null = report.period_from, pt: string | null = report.period_to;
+    const inPeriod = (d?: string | null) => { if (!pf || !pt) return true; if (!d) return true; const x = String(d).slice(0, 10); return x >= pf && x <= pt; };
+
     const [recR, audR, taskR, linkR, existR] = await Promise.all([
-      sb.from("recommendations").select("id, type, title, page").eq("client_id", client_id).in("status", ["applied", "done"]),
-      sb.from("audit_issues").select("id, issue, page").eq("client_id", client_id).eq("status", "applied"),
-      sb.from("tasks").select("id, title, category, page_url, source_type, note").eq("client_id", client_id).eq("status", "done"),
-      sb.from("report_links").select("id, link_type, url, notes").eq("client_id", client_id),
+      sb.from("recommendations").select("id, type, title, page, applied_at, created_at").eq("client_id", client_id).in("status", ["applied", "done"]),
+      sb.from("audit_issues").select("id, issue, page, created_at").eq("client_id", client_id).eq("status", "applied"),
+      sb.from("tasks").select("id, title, category, page_url, source_type, note, done_at, due_date").eq("client_id", client_id).eq("status", "done"),
+      sb.from("report_links").select("id, link_type, url, notes, done_on").eq("client_id", client_id),
       sb.from("report_items").select("source_type, source_ref").eq("report_id", report_id),
     ]);
 
@@ -49,19 +54,23 @@ Deno.serve(async (req) => {
     const cands: Cand[] = [];
     for (const r of recR.data || []) {
       const k = `recommendation:${r.id}`; if (have.has(k)) continue;
+      if (!inPeriod(r.applied_at || r.created_at)) continue;
       cands.push({ source_type: "recommendation", source_ref: String(r.id), title: r.title || "", area: REC_AREA[r.type] || "תוכן", category: CONTENT_REC.has(r.type) ? "תוכן באתר" : "אופטימיזציה טכנית ותיקונים", page: r.page, hint: r.type });
     }
     for (const a of audR.data || []) {
       const k = `audit:${a.id}`; if (have.has(k)) continue;
+      if (!inPeriod(a.created_at)) continue;
       cands.push({ source_type: "audit", source_ref: String(a.id), title: a.issue || "", area: "אודיט טכני", category: auditCat(a.issue || ""), page: a.page, hint: "audit" });
     }
     for (const t of taskR.data || []) {
       if (t.source_type === "recommendation" || t.source_type === "audit") continue;
       const k = `task:${t.id}`; if (have.has(k)) continue;
+      if (!inPeriod(t.done_at || t.due_date)) continue;
       cands.push({ source_type: "task", source_ref: String(t.id), title: t.title || "", area: PILLAR_AREA[t.category || ""] || "משימה", category: catForPillar[t.category || ""] || "אחר", page: t.page_url, hint: t.note || "" });
     }
     for (const l of linkR.data || []) {
       const k = `link:${l.id}`; if (have.has(k)) continue;
+      if (!inPeriod(l.done_on)) continue;
       cands.push({ source_type: "link", source_ref: String(l.id), title: `בניית קישור: ${l.link_type}`, area: "קישורים נכנסים", category: "קישורים", page: l.url, hint: l.notes || "" });
     }
     const batch = cands.slice(0, 40);
