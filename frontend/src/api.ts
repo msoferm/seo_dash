@@ -1057,6 +1057,38 @@ export async function listBlogPosts(clientId: number): Promise<BlogPost[]> {
   return data || [];
 }
 
+/** #4a: user-controlled folders for the blog history (name + date range). */
+export interface BlogFolder {
+  id: number;
+  client_id: number;
+  name: string;
+  date_from: string | null; // YYYY-MM-DD
+  date_to: string | null;   // YYYY-MM-DD
+  created_at: string;
+}
+
+export async function listBlogFolders(clientId: number): Promise<BlogFolder[]> {
+  const { data, error } = await supabase.from("blog_folders").select("*").eq("client_id", clientId).order("date_from", { ascending: false, nullsFirst: false });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function createBlogFolder(clientId: number, name: string, dateFrom: string | null, dateTo: string | null): Promise<BlogFolder> {
+  const { data, error } = await supabase.from("blog_folders").insert({ client_id: clientId, name, date_from: dateFrom, date_to: dateTo }).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateBlogFolder(id: number, patch: { name?: string; date_from?: string | null; date_to?: string | null }): Promise<void> {
+  const { error } = await supabase.from("blog_folders").update(patch).eq("id", id);
+  if (error) throw error;
+}
+
+export async function deleteBlogFolder(id: number): Promise<void> {
+  const { error } = await supabase.from("blog_folders").delete().eq("id", id);
+  if (error) throw error;
+}
+
 export interface ContentBrief {
   keyword: string;
   suggested_title: string;

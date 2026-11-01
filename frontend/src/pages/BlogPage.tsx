@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Newspaper, Loader2, Plug, Check, ExternalLink, Trash2, Send, CalendarClock, AlertTriangle, Save, Lightbulb, X, Pencil, MessageCircle, Link2, Plus, ChevronDown, ChevronUp, RotateCcw, Target } from "lucide-react";
+import { Newspaper, Loader2, Plug, Check, ExternalLink, Trash2, Send, CalendarClock, AlertTriangle, Save, Lightbulb, X, Pencil, MessageCircle, Link2, Plus, ChevronDown, ChevronUp, RotateCcw, Target, Folder, FolderPlus } from "lucide-react";
 import * as api from "../api";
 import type { BlogPost } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -237,6 +237,180 @@ function ProposalCard({ cid, p, client }: { cid: number; p: BlogPost; client?: {
   );
 }
 
+/** #4a: blog history grouped into user-controlled folders (name + date range, renameable/deletable). */
+function BlogHistory({ cid, history, hint, invalidate }: { cid: number; history: BlogPost[]; hint: string; invalidate: () => void }) {
+  const qc = useQueryClient();
+  const { data: folders } = useQuery({ queryKey: ["blog-folders", cid], queryFn: () => api.listBlogFolders(cid), enabled: !!cid });
+  const invalidateFolders = () => qc.invalidateQueries({ queryKey: ["blog-folders", cid] });
+
+  const revert = useMutation({ mutationFn: (id: number) => api.revertBlogPost(id), onSuccess: invalidate });
+  const createFolder = useMutation({ mutationFn: (p: { name: string; from: string | null; to: string | null }) => api.createBlogFolder(cid, p.name, p.from, p.to), onSuccess: invalidateFolders });
+  const updateFolder = useMutation({ mutationFn: (p: { id: number; patch: { name?: string; date_from?: string | null; date_to?: string | null } }) => api.updateBlogFolder(p.id, p.patch), onSuccess: invalidateFolders });
+  const deleteFolder = useMutation({ mutationFn: (id: number) => api.deleteBlogFolder(id), onSuccess: invalidateFolders });
+
+  const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editFrom, setEditFrom] = useState("");
+  const [editTo, setEditTo] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newFrom, setNewFrom] = useState("");
+  const [newTo, setNewTo] = useState("");
+
+  const inRange = (createdAt: string, f: api.BlogFolder) => {
+    const d = (createdAt || "").slice(0, 10);
+    if (!d) return false;
+    if (f.date_from && d < f.date_from) return false;
+    if (f.date_to && d > f.date_to) return false;
+    return true;
+  };
+  // Each article lands in exactly ONE folder — the first (newest-first) whose range contains it.
+  const flist = folders || [];
+  const byFolder = new Map<number, BlogPost[]>();
+  const unfiled: BlogPost[] = [];
+  for (const p of history) {
+    const f = flist.find((fl) => inRange(p.created_at, fl));
+    if (f) { if (!byFolder.has(f.id)) byFolder.set(f.id, []); byFolder.get(f.id)!.push(p); }
+    else unfiled.push(p);
+  }
+
+  const fmtDate = (d: string | null) => (d ? new Date(d + "T00:00:00").toLocaleDateString("he-IL", { day: "numeric", month: "short", year: "numeric" }) : null);
+  const rangeLabel = (f: api.BlogFolder) => {
+    const a = fmtDate(f.date_from), b = fmtDate(f.date_to);
+    if (a && b) return `${a} – ${b}`;
+    if (a) return `מ-${a}`;
+    if (b) return `עד ${b}`;
+    return "כל התאריכים";
+  };
+
+  const startEdit = (f: api.BlogFolder) => { setEditId(f.id); setEditName(f.name); setEditFrom(f.date_from || ""); setEditTo(f.date_to || ""); };
+  const saveEdit = () => {
+    if (editId == null || !editName.trim()) return;
+    updateFolder.mutate({ id: editId, patch: { name: editName.trim(), date_from: editFrom || null, date_to: editTo || null } });
+    setEditId(null);
+  };
+  const saveNew = () => {
+    if (!newName.trim()) return;
+    createFolder.mutate({ name: newName.trim(), from: newFrom || null, to: newTo || null });
+    setNewName(""); setNewFrom(""); setNewTo(""); setAdding(false);
+  };
+
+  const ArticleItem = ({ p }: { p: BlogPost }) => (
+    <li className="py-3 px-3 flex items-start gap-3">
+      <span className={`badge ${STATUS_BADGE[p.status || ""] || "bg-slate-100 text-slate-600"} shrink-0 mt-0.5`}>{STATUS_LABEL[p.status || ""] || p.status}</span>
+      <div className="flex-1 min-w-0">
+        <div className="font-medium text-slate-900">{p.title}</div>
+        <div className="text-xs text-slate-400">{p.keyword && <>מילה: {p.keyword} · </>}{new Date(p.created_at).toLocaleString("he-IL")}</div>
+        {p.error && <div className="text-xs text-rose-600 mt-0.5 break-words">{p.error}</div>}
+      </div>
+      {p.url && <a href={p.url} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline text-sm inline-flex items-center gap-1 shrink-0"><ExternalLink size={13} /> צפה</a>}
+      <button className="text-slate-400 hover:text-amber-600 text-xs inline-flex items-center gap-1 shrink-0" title="החזר למצב 'לא נכתב' (רק במערכת — לא נוגע באתר)"
+        onClick={() => { if (confirm("להחזיר את המאמר למצב 'ממתין' (הצעה)? זה לא נוגע בפוסט באתר — רק מחזיר את הרשומה במערכת לעריכה/כתיבה מחדש.")) revert.mutate(p.id); }}
+        disabled={revert.isPending && revert.variables === p.id}>
+        {revert.isPending && revert.variables === p.id ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />} החזר
+      </button>
+    </li>
+  );
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+        <h3 className="font-semibold flex items-center gap-2 text-slate-800"><Newspaper size={18} /> היסטוריית מאמרים</h3>
+        <button className="btn-secondary text-sm" onClick={() => setAdding((v) => !v)}><FolderPlus size={15} /> תיקייה חדשה</button>
+      </div>
+
+      {adding && (
+        <div className="mb-4 p-3 rounded-lg border border-brand-200 bg-brand-50/40 flex flex-wrap items-end gap-3">
+          <div className="flex-1 min-w-[160px]">
+            <label className="block text-xs text-slate-500 mb-1">שם התיקייה</label>
+            <input className="input py-1.5 text-sm w-full" placeholder="לדוגמה: קמפיין נובמבר" value={newName} onChange={(e) => setNewName(e.target.value)} autoFocus />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">מתאריך</label>
+            <input type="date" className="input py-1.5 text-sm" value={newFrom} onChange={(e) => setNewFrom(e.target.value)} />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">עד תאריך</label>
+            <input type="date" className="input py-1.5 text-sm" value={newTo} onChange={(e) => setNewTo(e.target.value)} />
+          </div>
+          <button className="btn-primary text-sm" onClick={saveNew} disabled={!newName.trim() || createFolder.isPending}><Save size={15} /> שמור</button>
+          <button className="btn-secondary text-sm" onClick={() => setAdding(false)}><X size={15} /></button>
+        </div>
+      )}
+
+      {history.length === 0 ? (
+        <p className="text-slate-400 text-sm">{hint}</p>
+      ) : (
+        <div className="space-y-2">
+          {flist.map((f) => {
+            const items = byFolder.get(f.id) || [];
+            const isOpen = openFolders[`f${f.id}`] ?? true;
+            const editing = editId === f.id;
+            return (
+              <div key={f.id} className="border border-slate-200 rounded-lg overflow-hidden">
+                {editing ? (
+                  <div className="bg-slate-50 px-3 py-2 flex flex-wrap items-end gap-3">
+                    <div className="flex-1 min-w-[140px]">
+                      <label className="block text-xs text-slate-500 mb-1">שם</label>
+                      <input className="input py-1 text-sm w-full" value={editName} onChange={(e) => setEditName(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500 mb-1">מתאריך</label>
+                      <input type="date" className="input py-1 text-sm" value={editFrom} onChange={(e) => setEditFrom(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500 mb-1">עד תאריך</label>
+                      <input type="date" className="input py-1 text-sm" value={editTo} onChange={(e) => setEditTo(e.target.value)} />
+                    </div>
+                    <button className="btn-primary text-sm" onClick={saveEdit} disabled={!editName.trim() || updateFolder.isPending}><Check size={15} /> שמור</button>
+                    <button className="btn-secondary text-sm" onClick={() => setEditId(null)}><X size={15} /></button>
+                  </div>
+                ) : (
+                  <div className="w-full flex items-center justify-between gap-2 bg-slate-50 px-3 py-2">
+                    <button className="flex items-center gap-2 text-right min-w-0" onClick={() => setOpenFolders((o) => ({ ...o, [`f${f.id}`]: !isOpen }))}>
+                      {isOpen ? <ChevronUp size={16} className="text-slate-400 shrink-0" /> : <ChevronDown size={16} className="text-slate-400 shrink-0" />}
+                      <Folder size={15} className="text-brand-500 shrink-0" />
+                      <span className="font-medium text-slate-700 truncate">{f.name}</span>
+                      <span className="text-xs text-slate-400 shrink-0">· {rangeLabel(f)}</span>
+                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <span className="text-xs text-slate-400 ml-1">{items.length} מאמרים</span>
+                      <button className="text-slate-400 hover:text-brand-600 p-1" title="ערוך תיקייה" onClick={() => startEdit(f)}><Pencil size={14} /></button>
+                      <button className="text-slate-400 hover:text-rose-600 p-1" title="מחק תיקייה (המאמרים לא נמחקים)"
+                        onClick={() => { if (confirm(`למחוק את התיקייה "${f.name}"? המאמרים עצמם לא יימחקו — הם יחזרו לרשימה הכללית.`)) deleteFolder.mutate(f.id); }}
+                        disabled={deleteFolder.isPending && deleteFolder.variables === f.id}>
+                        {deleteFolder.isPending && deleteFolder.variables === f.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {isOpen && !editing && (
+                  items.length === 0
+                    ? <p className="text-xs text-slate-400 px-3 py-3">אין מאמרים בטווח התאריכים של התיקייה.</p>
+                    : <ul className="divide-y divide-slate-100">{items.map((p) => <ArticleItem key={p.id} p={p} />)}</ul>
+                )}
+              </div>
+            );
+          })}
+
+          {unfiled.length > 0 && (
+            <div className="border border-dashed border-slate-200 rounded-lg overflow-hidden">
+              <button className="w-full flex items-center justify-between gap-2 bg-slate-50/60 px-3 py-2 text-right" onClick={() => setOpenFolders((o) => ({ ...o, unfiled: !(o.unfiled ?? true) }))}>
+                <span className="font-medium text-slate-500 flex items-center gap-2">
+                  {(openFolders.unfiled ?? true) ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />} ללא תיקייה
+                </span>
+                <span className="text-xs text-slate-400">{unfiled.length} מאמרים</span>
+              </button>
+              {(openFolders.unfiled ?? true) && <ul className="divide-y divide-slate-100">{unfiled.map((p) => <ArticleItem key={p.id} p={p} />)}</ul>}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function BlogPage() {
   const { clientId } = useParams();
   const cid = Number(clientId);
@@ -252,10 +426,8 @@ export default function BlogPage() {
   const disconnect = useMutation({ mutationFn: () => api.disconnectWordpress(cid), onSuccess: invalidate });
   const publishNow = useMutation({ mutationFn: () => api.publishBlogNow(cid), onSuccess: invalidate });
   const propose = useMutation({ mutationFn: () => api.proposeBlog(cid), onSuccess: invalidate });
-  const revert = useMutation({ mutationFn: (id: number) => api.revertBlogPost(id), onSuccess: invalidate });
 
   const [bridgeSecret, setBridgeSecret] = useState("");
-  const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState<AssistantSeed | null>(null);
   const askContent = () => { setChatSeed({ title: "כתיבת תוכן לבלוג", nonce: Date.now(), context: `התייעצות על כתיבת תוכן/מאמרים לבלוג של ${client?.name || "הלקוח"} (${client?.domain || ""}). נושאים: רעיונות למאמרים, מבנה, טון, מילות מפתח, שיפור טיוטות.` }); setChatOpen(true); };
@@ -362,56 +534,13 @@ export default function BlogPage() {
             </div>
           )}
 
-          {/* History — grouped into month/year folders (#4a) */}
-          {(() => {
-            const history = (posts || []).filter((p) => ["publish", "draft", "error", "done"].includes(p.status || ""));
-            const groups = new Map<string, BlogPost[]>();
-            for (const p of history) { const k = (p.created_at || "").slice(0, 7); if (!groups.has(k)) groups.set(k, []); groups.get(k)!.push(p); }
-            const monthKeys = [...groups.keys()].filter(Boolean).sort().reverse();
-            const monthLabel = (m: string) => new Date(m + "-01T00:00:00").toLocaleDateString("he-IL", { month: "long", year: "numeric" });
-            const isOpen = (k: string) => openFolders[k] ?? (k === monthKeys[0]);
-            return (
-          <div className="card">
-            <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-3"><Newspaper size={18} /> היסטוריית מאמרים</h3>
-            {history.length === 0 ? (
-              <p className="text-slate-400 text-sm">עדיין לא פורסמו מאמרים. {wp.require_approval ? 'לחץ "הצע נושא" לקבלת הצעה' : 'לחץ "כתוב ופרסם עכשיו"'} או המתן לריצה השבועית.</p>
-            ) : (
-              <div className="space-y-2">
-                {monthKeys.map((mk) => (
-                  <div key={mk} className="border border-slate-200 rounded-lg overflow-hidden">
-                    <button className="w-full flex items-center justify-between gap-2 bg-slate-50 px-3 py-2 text-right" onClick={() => setOpenFolders((o) => ({ ...o, [mk]: !isOpen(mk) }))}>
-                      <span className="font-medium text-slate-700 flex items-center gap-2">{isOpen(mk) ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />} {monthLabel(mk)}</span>
-                      <span className="text-xs text-slate-400">{groups.get(mk)!.length} מאמרים</span>
-                    </button>
-                    {isOpen(mk) && (
-                      <ul className="divide-y divide-slate-100">
-                        {groups.get(mk)!.map((p: BlogPost) => (
-                          <li key={p.id} className="py-3 px-3 flex items-start gap-3">
-                            <span className={`badge ${STATUS_BADGE[p.status || ""] || "bg-slate-100 text-slate-600"} shrink-0 mt-0.5`}>{STATUS_LABEL[p.status || ""] || p.status}</span>
-                            <div className="flex-1 min-w-0">
-                              <div className="font-medium text-slate-900">{p.title}</div>
-                              <div className="text-xs text-slate-400">
-                                {p.keyword && <>מילה: {p.keyword} · </>}{new Date(p.created_at).toLocaleString("he-IL")}
-                              </div>
-                              {p.error && <div className="text-xs text-rose-600 mt-0.5 break-words">{p.error}</div>}
-                            </div>
-                            {p.url && <a href={p.url} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline text-sm inline-flex items-center gap-1 shrink-0"><ExternalLink size={13} /> צפה</a>}
-                            <button className="text-slate-400 hover:text-amber-600 text-xs inline-flex items-center gap-1 shrink-0" title="החזר למצב 'לא נכתב' (רק במערכת — לא נוגע באתר)"
-                              onClick={() => { if (confirm("להחזיר את המאמר למצב 'ממתין' (הצעה)? זה לא נוגע בפוסט באתר — רק מחזיר את הרשומה במערכת לעריכה/כתיבה מחדש.")) revert.mutate(p.id); }}
-                              disabled={revert.isPending && revert.variables === p.id}>
-                              {revert.isPending && revert.variables === p.id ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />} החזר
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-            );
-          })()}
+          {/* History — grouped into user-controlled folders with date ranges (#4a) */}
+          <BlogHistory
+            cid={cid}
+            history={(posts || []).filter((p) => ["publish", "draft", "error", "done"].includes(p.status || ""))}
+            hint={`עדיין לא פורסמו מאמרים. ${wp.require_approval ? 'לחץ "הצע נושא" לקבלת הצעה' : 'לחץ "כתוב ופרסם עכשיו"'} או המתן לריצה השבועית.`}
+            invalidate={invalidate}
+          />
 
           <AssistantFab onClick={askContent} />
           <TaskAssistant cid={cid} open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} />
