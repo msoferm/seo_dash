@@ -8,7 +8,7 @@
  * reason, sensible defaults are used, so a plan is always produced.
  *
  * Replaces any previous generated plan (source='plan'); manual/upload tasks are untouched.
- * rev: 2026-10-30a (syncs with keyword_targets — adds a task per declared target not already covered)
+ * rev: 2026-11-01a (keyword_targets note carried into the task details)
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
@@ -92,7 +92,7 @@ Deno.serve(async (req) => {
     const forumNew = (forumRes.data || []).length, prospectNew = (prospectRes.data || []).length;
     const pagesNoFaq = pages.filter((p: any) => !p.has_faq).length;
     // #3 sync: the declared keyword→page targets (from the structure tab).
-    const { data: ktData } = await sb.from("keyword_targets").select("keyword, page_url, intent").eq("client_id", client_id).eq("status", "active");
+    const { data: ktData } = await sb.from("keyword_targets").select("keyword, page_url, intent, notes").eq("client_id", client_id).eq("status", "active");
     const ktargets = (ktData || []) as any[];
 
     const subs: Sub[] = [];
@@ -123,10 +123,11 @@ Deno.serve(async (req) => {
     for (const t of ktargets) {
       const kw = (t.keyword || "").trim(); if (!kw) continue;
       if (recs.some((r: any) => (r.title || "").includes(kw))) continue; // already covered by a recommendation-derived task
+      const noteLine = t.notes ? ` הערת צוות: ${t.notes}` : "";
       if (t.intent === "new_page") {
-        push({ key: `kt:${kw}`, pillar: "traffic", kind: "claude", title: `כתיבת עמוד חדש לביטוי "${kw}"`, details: "הוגדר כיעד לעמוד חדש בלשונית 'אופטימיזציית מבנה ומילות מפתח'.", source_type: "keyword_target", source_ref: kw, page_url: t.page_url || null, priority: "medium", impact: "high", writes_text: true });
+        push({ key: `kt:${kw}`, pillar: "traffic", kind: "claude", title: `כתיבת עמוד חדש לביטוי "${kw}"`, details: `הוגדר כיעד לעמוד חדש בלשונית 'אופטימיזציית מבנה ומילות מפתח'.${noteLine}`, source_type: "keyword_target", source_ref: kw, page_url: t.page_url || null, priority: "medium", impact: "high", writes_text: true });
       } else {
-        push({ key: `kt:${kw}`, pillar: "content", kind: "claude", title: `חיזוק עמוד היעד לביטוי "${kw}"`, details: `חזק את עמוד היעד ${t.page_url || "(ללא URL)"} — כותרת/תיאור/תוכן/קישורים פנימיים, ומניעת קניבליזציה.`, source_type: "keyword_target", source_ref: kw, page_url: t.page_url || null, priority: "medium", impact: "high", writes_text: true });
+        push({ key: `kt:${kw}`, pillar: "content", kind: "claude", title: `חיזוק עמוד היעד לביטוי "${kw}"`, details: `חזק את עמוד היעד ${t.page_url || "(ללא URL)"} — כותרת/תיאור/תוכן/קישורים פנימיים, ומניעת קניבליזציה.${noteLine}`, source_type: "keyword_target", source_ref: kw, page_url: t.page_url || null, priority: "medium", impact: "high", writes_text: true });
       }
     }
 

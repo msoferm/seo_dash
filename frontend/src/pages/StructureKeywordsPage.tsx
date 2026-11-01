@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Network, Search, ExternalLink, AlertTriangle, Check, X, Loader2, Save, Target } from "lucide-react";
+import { Network, Search, ExternalLink, AlertTriangle, Check, X, Loader2, Save, Target, FileText, Sparkles, StickyNote } from "lucide-react";
 import * as api from "../api";
 import type { KwPageRow, KeywordTarget } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -14,17 +14,66 @@ function fmt(d: Date): string {
 function decodePath(u: string): string {
   try { return decodeURIComponent(u.replace(/^https?:\/\/[^/]+/, "")) || u; } catch { return u; }
 }
+const norm = (u: string) => (u || "").replace(/\/+$/, "").toLowerCase();
+/** How many of the keyword's words appear in the page URL/slug (textual match for #3). */
+function matchScore(term: string, url: string): number {
+  const toks = term.split(/\s+/).map((t) => t.trim().toLowerCase()).filter((t) => t.length >= 2);
+  if (!toks.length) return 0;
+  const p = decodePath(url).toLowerCase();
+  return toks.filter((t) => p.includes(t)).length;
+}
+function isFullMatch(term: string, url: string): boolean {
+  const toks = term.split(/\s+/).map((t) => t.trim()).filter((t) => t.length >= 2);
+  return toks.length > 0 && matchScore(term, url) === toks.length;
+}
 
-/** #3: per-keyword target editor — choose the page that should own this keyword (or a new page). */
-function TargetEditor({ cid, term, pages, saved, onSaved }: { cid: number; term: string; pages: string[]; saved?: KeywordTarget; onSaved: () => void }) {
+/** #4: a team note on a keyword ("needs a new page" / "needs content improvement" / free text).
+ * Stored on keyword_targets.notes and synced into the work plan & content suggestions. */
+function NoteEditor({ cid, term, saved, onSaved }: { cid: number; term: string; saved?: KeywordTarget; onSaved: () => void }) {
+  const [note, setNote] = useState(saved?.notes || "");
+  const [open, setOpen] = useState(false);
+  const save = useMutation({
+    mutationFn: (p: { notes: string; intent?: string }) =>
+      api.upsertKeywordTarget(cid, { keyword: term, page_url: saved?.page_url ?? null, intent: p.intent ?? (saved?.intent || "strengthen"), notes: p.notes.trim() || null }),
+    onSuccess: () => { onSaved(); setOpen(false); },
+  });
+  if (!open) {
+    return (
+      <button className="mt-2 text-xs text-slate-500 hover:text-brand-600 inline-flex items-center gap-1" onClick={() => setOpen(true)}>
+        <StickyNote size={13} /> {saved?.notes ? "ערוך הערה למערכת" : "הוסף הערה למערכת"}
+      </button>
+    );
+  }
+  return (
+    <div className="mt-2 bg-amber-50/60 border border-amber-200 rounded-lg p-2 space-y-2">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-xs text-slate-500">הערה מהירה:</span>
+        <button className="badge bg-white border border-amber-300 text-amber-700 hover:bg-amber-100" onClick={() => save.mutate({ notes: note.trim() || "דורש כתיבת דף חדש", intent: "new_page" })}>דורש כתיבת דף חדש</button>
+        <button className="badge bg-white border border-amber-300 text-amber-700 hover:bg-amber-100" onClick={() => save.mutate({ notes: note.trim() || "דורש שיפור תוכן לעמוד", intent: "strengthen" })}>דורש שיפור תוכן</button>
+      </div>
+      <textarea className="input py-1 text-sm w-full" rows={2} placeholder="הערה חופשית למערכת (תיכנס לתכנית העבודה ולהצעות שיפור התוכן)..." value={note} onChange={(e) => setNote(e.target.value)} />
+      <div className="flex items-center gap-1.5">
+        <button className="btn-primary text-xs py-1 px-2" onClick={() => save.mutate({ notes: note })} disabled={save.isPending}>
+          {save.isPending ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} שמור הערה
+        </button>
+        <button className="text-xs py-1 px-2 rounded text-slate-500 hover:bg-white" onClick={() => setOpen(false)}>סגור</button>
+        {save.isError && <span className="text-xs text-rose-600">{(save.error as any)?.message}</span>}
+      </div>
+    </div>
+  );
+}
+
+/** #3: per-keyword target editor — choose the page that should own this keyword (or a new page).
+ * New (just-written) pages appear as purple "🆕" options until chosen. */
+function TargetEditor({ cid, term, candidates, newUrls, saved, onSaved }: { cid: number; term: string; candidates: string[]; newUrls: Set<string>; saved?: KeywordTarget; onSaved: () => void }) {
   const NEW = "__new__";
-  const initSel = saved ? (saved.intent === "new_page" ? NEW : (saved.page_url || NEW)) : (pages[0] || NEW);
+  const initSel = saved ? (saved.intent === "new_page" ? NEW : (saved.page_url || candidates[0] || NEW)) : (candidates[0] || NEW);
   const [sel, setSel] = useState<string>(initSel);
   const [newUrl, setNewUrl] = useState<string>(saved?.intent === "new_page" ? (saved.page_url || "") : "");
   const save = useMutation({
     mutationFn: () => {
-      if (sel === NEW) return api.upsertKeywordTarget(cid, { keyword: term, page_url: newUrl.trim() || null, intent: "new_page" });
-      return api.upsertKeywordTarget(cid, { keyword: term, page_url: sel, intent: "strengthen" });
+      if (sel === NEW) return api.upsertKeywordTarget(cid, { keyword: term, page_url: newUrl.trim() || null, intent: "new_page", notes: saved?.notes ?? null });
+      return api.upsertKeywordTarget(cid, { keyword: term, page_url: sel, intent: "strengthen", notes: saved?.notes ?? null });
     },
     onSuccess: onSaved,
   });
@@ -32,8 +81,8 @@ function TargetEditor({ cid, term, pages, saved, onSaved }: { cid: number; term:
     <div className="mt-2 flex flex-wrap items-center gap-1.5 bg-slate-50 rounded-lg p-2">
       <Target size={14} className="text-brand-600 shrink-0" />
       <span className="text-xs text-slate-500">עמוד יעד:</span>
-      <select className="input py-1 text-xs w-auto max-w-[260px]" value={sel} onChange={(e) => setSel(e.target.value)}>
-        {pages.map((p) => <option key={p} value={p}>{decodePath(p)}</option>)}
+      <select className="input py-1 text-xs w-auto max-w-[280px]" value={sel} onChange={(e) => setSel(e.target.value)}>
+        {candidates.map((p) => <option key={p} value={p}>{newUrls.has(norm(p)) ? "🆕 " : ""}{decodePath(p)}</option>)}
         <option value={NEW}>➕ עמוד חדש (לכתוב מאמר)</option>
       </select>
       {sel === NEW && (
@@ -59,10 +108,13 @@ export default function StructureKeywordsPage() {
   const [view, setView] = useState<"keyword" | "page">("keyword");
   const [q, setQ] = useState("");
   const [onlyCannibal, setOnlyCannibal] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const { data: client } = useQuery({ queryKey: ["client", cid], queryFn: () => api.getClient(cid), enabled: !!cid });
   const { data: rows, isLoading, refetch, isFetching } = useQuery({ queryKey: ["kw-map", cid, from, to], queryFn: () => api.getKeywordPageMap(cid, from, to), enabled: !!cid });
   const { data: targets } = useQuery({ queryKey: ["kw-targets", cid], queryFn: () => api.listKeywordTargets(cid), enabled: !!cid });
+  const { data: posts } = useQuery({ queryKey: ["blog-posts", cid], queryFn: () => api.listBlogPosts(cid), enabled: !!cid });
   const invalidateTargets = () => qc.invalidateQueries({ queryKey: ["kw-targets", cid] });
   const delTarget = useMutation({ mutationFn: (id: number) => api.deleteKeywordTarget(id), onSuccess: invalidateTargets });
 
@@ -71,6 +123,41 @@ export default function StructureKeywordsPage() {
     for (const t of targets || []) m.set(t.keyword, t);
     return m;
   }, [targets]);
+
+  // URLs already chosen as some keyword's target page (so they're no longer "new/unassigned").
+  const assignedUrls = useMemo(() => {
+    const s = new Set<string>();
+    for (const t of targets || []) if (t.page_url) s.add(norm(t.page_url));
+    return s;
+  }, [targets]);
+
+  // #5: pages the system has written (published/draft blog articles with a URL), by their keyword.
+  const writtenByTerm = useMemo(() => {
+    const m = new Map<string, { url: string; title: string; created_at: string }[]>();
+    for (const p of posts || []) {
+      if (!p.url || !["publish", "draft", "done"].includes(p.status || "")) continue;
+      const k = (p.keyword || "").trim();
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push({ url: p.url, title: p.title, created_at: p.created_at });
+    }
+    return m;
+  }, [posts]);
+  const writtenUrls = useMemo(() => {
+    const s = new Set<string>();
+    for (const arr of writtenByTerm.values()) for (const w of arr) s.add(norm(w.url));
+    return s;
+  }, [writtenByTerm]);
+  // #6: written pages not yet assigned as any target — they need to be defined as a target page.
+  const newPages = useMemo(() => {
+    const seen = new Set<string>(); const out: { url: string; title: string; keyword: string }[] = [];
+    for (const p of posts || []) {
+      if (!p.url || !["publish", "draft", "done"].includes(p.status || "")) continue;
+      const nu = norm(p.url);
+      if (seen.has(nu) || assignedUrls.has(nu)) continue;
+      seen.add(nu); out.push({ url: p.url, title: p.title, keyword: (p.keyword || "").trim() });
+    }
+    return out;
+  }, [posts, assignedUrls]);
 
   // term -> its ranking pages (desc by impressions); page -> its ranking terms.
   const { byTerm, byPage } = useMemo(() => {
@@ -87,30 +174,63 @@ export default function StructureKeywordsPage() {
     return { byTerm: bt, byPage: bp };
   }, [rows]);
 
-  const termList = useMemo(() => {
-    let list = [...byTerm.entries()];
-    if (onlyCannibal) list = list.filter(([, pgs]) => pgs.length >= 2);
-    if (q.trim()) { const s = q.trim().toLowerCase(); list = list.filter(([t]) => t.toLowerCase().includes(s)); }
-    return list.sort((a, b) => b[1].reduce((s, r) => s + r.impressions, 0) - a[1].reduce((s, r) => s + r.impressions, 0));
-  }, [byTerm, onlyCannibal, q]);
+  // Keyword rows = union of GSC terms and keywords that have a written page (so new pages always show).
+  const termEntries = useMemo(() => {
+    const terms = new Set<string>([...byTerm.keys()]);
+    for (const k of writtenByTerm.keys()) if (k) terms.add(k);
+    let list = [...terms].map((term) => ({ term, pgs: byTerm.get(term) || [], written: writtenByTerm.get(term) || [] }));
+    if (onlyCannibal) list = list.filter((e) => e.pgs.length >= 2);
+    if (q.trim()) { const s = q.trim().toLowerCase(); list = list.filter((e) => e.term.toLowerCase().includes(s)); }
+    return list.sort((a, b) => b.pgs.reduce((s, r) => s + r.impressions, 0) - a.pgs.reduce((s, r) => s + r.impressions, 0));
+  }, [byTerm, writtenByTerm, onlyCannibal, q]);
 
   const pageList = useMemo(() => {
-    let list = [...byPage.entries()];
-    if (q.trim()) { const s = q.trim().toLowerCase(); list = list.filter(([p, terms]) => p.toLowerCase().includes(s) || terms.some((r) => r.term.toLowerCase().includes(s))); }
-    return list.sort((a, b) => b[1].reduce((s, r) => s + r.impressions, 0) - a[1].reduce((s, r) => s + r.impressions, 0));
-  }, [byPage, q]);
+    let list = [...byPage.entries()].map(([page, terms]) => ({ page, terms, isNew: writtenUrls.has(norm(page)) && !assignedUrls.has(norm(page)) }));
+    const have = new Set(list.map((e) => norm(e.page)));
+    for (const np of newPages) if (!have.has(norm(np.url))) list.push({ page: np.url, terms: [] as KwPageRow[], isNew: true });
+    if (q.trim()) { const s = q.trim().toLowerCase(); list = list.filter((e) => e.page.toLowerCase().includes(s) || e.terms.some((r) => r.term.toLowerCase().includes(s))); }
+    return list.sort((a, b) => (b.isNew ? 1 : 0) - (a.isNew ? 1 : 0) || b.terms.reduce((s, r) => s + r.impressions, 0) - a.terms.reduce((s, r) => s + r.impressions, 0));
+  }, [byPage, newPages, writtenUrls, assignedUrls, q]);
 
   const cannibalCount = [...byTerm.values()].filter((p) => p.length >= 2).length;
+
+  const jumpTo = (term: string) => {
+    setQ(""); setOnlyCannibal(false); setView("keyword");
+    setTimeout(() => {
+      const el = rowRefs.current[term];
+      if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); setFlash(term); setTimeout(() => setFlash(null), 2200); }
+    }, 70);
+  };
 
   return (
     <div>
       <PageHeader title="אופטימיזציית מבנה ומילות מפתח" subtitle={client ? `${client.name} · איזה ביטוי שייך לאיזה עמוד` : "מבנה ומילות מפתח"} />
       <DataSourceBanner cid={cid} match={["Search Console"]} />
 
+      {/* #6: new written pages that still need a target-page decision */}
+      {newPages.length > 0 && (
+        <div className="card mb-4 border-r-4 border-r-violet-400 bg-violet-50/40">
+          <h3 className="font-semibold flex items-center gap-2 text-violet-800 mb-2"><Sparkles size={17} /> עמודים חדשים שנכתבו — להגדיר כעמוד יעד ({newPages.length})</h3>
+          <ul className="space-y-1.5">
+            {newPages.map((np) => (
+              <li key={np.url} className="flex items-center justify-between gap-2 text-sm bg-white border border-violet-200 rounded-lg px-3 py-2">
+                <div className="min-w-0">
+                  <div className="font-medium text-slate-800 truncate">{np.title}</div>
+                  <a href={np.url} target="_blank" rel="noreferrer" className="text-xs text-violet-600 hover:underline inline-flex items-center gap-1 min-w-0"><ExternalLink size={11} className="shrink-0" /><span className="truncate">{decodePath(np.url)}</span></a>
+                </div>
+                {np.keyword
+                  ? <button className="btn-secondary text-xs py-1 px-2 shrink-0 border-violet-300 text-violet-700" onClick={() => jumpTo(np.keyword)}><Target size={12} /> הגדר ל"{np.keyword}"</button>
+                  : <span className="text-xs text-slate-400 shrink-0">ללא ביטוי משויך</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="card mb-4">
         <p className="text-sm text-slate-600 mb-3">
           התמונה המלאה: איזה ביטויים מדורגים על איזה עמודים, כמה ביטויים לכל עמוד, והיכן יש קניבליזציה (אותו ביטוי על כמה עמודים).
-          הגדר לכל ביטוי את <b>עמוד היעד</b> — והלשוניות האחרות (מנוע המלצות וכו') יסתנכרנו אליו.
+          הגדר לכל ביטוי את <b>עמוד היעד</b>, והוסף <b>הערה למערכת</b> — והלשוניות האחרות (תכנית עבודה, הצעות שיפור תוכן) יסתנכרנו אליו.
         </p>
         <div className="flex flex-wrap items-end gap-3">
           <div>
@@ -129,7 +249,7 @@ export default function StructureKeywordsPage() {
 
       {isLoading ? (
         <Spinner />
-      ) : (rows || []).length === 0 ? (
+      ) : (rows || []).length === 0 && newPages.length === 0 ? (
         <div className="card text-center py-10 text-slate-500 text-sm">
           <Network size={36} className="mx-auto mb-2 text-slate-300" />
           אין נתוני Search Console בטווח שנבחר. ודא שהלקוח מחובר ל-GSC וסונכרן, או הרחב את טווח התאריכים.
@@ -163,59 +283,98 @@ export default function StructureKeywordsPage() {
 
             {view === "keyword" ? (
               <div className="space-y-3">
-                {termList.map(([term, pgs]) => {
+                {termEntries.map(({ term, pgs, written }) => {
                   const total = pgs.reduce((s, r) => s + r.impressions, 0);
                   const clicks = pgs.reduce((s, r) => s + r.clicks, 0);
+                  const avgPos = total > 0 ? (pgs.reduce((s, r) => s + r.position * r.impressions, 0) / total) : (pgs.length ? pgs.reduce((s, r) => s + r.position, 0) / pgs.length : 0);
                   const cannibal = pgs.length >= 2;
                   const saved = targetByTerm.get(term);
+                  // #2/#3: unify GSC pages + written pages (not already ranking), sort textual-match first.
+                  const gscUrls = new Set(pgs.map((r) => norm(r.page)));
+                  type Item = { url: string; position: number | null; impressions: number | null; written: boolean; isNew: boolean };
+                  const items: Item[] = [
+                    ...pgs.map((r) => ({ url: r.page, position: r.position, impressions: r.impressions, written: writtenUrls.has(norm(r.page)), isNew: writtenUrls.has(norm(r.page)) && !assignedUrls.has(norm(r.page)) })),
+                    ...written.filter((w) => !gscUrls.has(norm(w.url))).map((w) => ({ url: w.url, position: null, impressions: null, written: true, isNew: !assignedUrls.has(norm(w.url)) })),
+                  ];
+                  items.sort((a, b) => (isFullMatch(term, b.url) ? 1 : 0) - (isFullMatch(term, a.url) ? 1 : 0) || matchScore(term, b.url) - matchScore(term, a.url) || (b.impressions || 0) - (a.impressions || 0));
+                  const candidates = items.map((i) => i.url);
+                  const newUrlSet = new Set(items.filter((i) => i.isNew).map((i) => norm(i.url)));
+                  const flashing = flash === term;
                   return (
-                    <div key={term} className="border border-slate-200 rounded-lg p-3">
+                    <div key={term} ref={(el) => { rowRefs.current[term] = el; }} className={`border rounded-lg p-3 transition-colors ${flashing ? "border-brand-400 bg-brand-50/60 ring-2 ring-brand-200" : "border-slate-200"}`}>
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="font-medium text-slate-900 flex items-center gap-2">
                           {term}
                           {cannibal && <span className="badge bg-rose-50 text-rose-600 inline-flex items-center gap-1"><AlertTriangle size={11} /> {pgs.length} עמודים</span>}
+                          {pgs.length === 0 && written.length > 0 && <span className="badge bg-violet-50 text-violet-600">נכתב עמוד חדש</span>}
                         </div>
-                        <div className="text-xs text-slate-400">{total} חשיפות · {clicks} קליקים</div>
+                        {/* #1: short demand line for the keyword */}
+                        <div className="text-xs text-slate-400">
+                          {pgs.length ? <>{total.toLocaleString()} חשיפות · {clicks.toLocaleString()} קליקים · מיקום ממוצע {avgPos.toFixed(1)}</> : "אין עדיין נתוני חיפוש"}
+                        </div>
                       </div>
-                      <ul className="mt-2 divide-y divide-slate-100">
-                        {pgs.map((r) => (
-                          <li key={r.page} className="py-1 flex items-center justify-between gap-2 text-sm">
-                            <a href={r.page} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline truncate inline-flex items-center gap-1 min-w-0"><ExternalLink size={11} className="shrink-0" /><span className="truncate">{decodePath(r.page)}</span></a>
-                            <span className="text-xs text-slate-400 shrink-0">מיקום {r.position} · {r.impressions} חשיפות</span>
-                          </li>
-                        ))}
-                      </ul>
-                      {saved && (
+                      {/* #2: pages this keyword appears on, with position; #3 best textual match first */}
+                      {items.length > 0 && (
+                        <ul className="mt-2 divide-y divide-slate-100">
+                          {items.map((it) => {
+                            const full = isFullMatch(term, it.url);
+                            return (
+                              <li key={it.url} className={`py-1 flex items-center justify-between gap-2 text-sm ${it.isNew ? "bg-violet-50/60 -mx-1 px-1 rounded" : ""}`}>
+                                <a href={it.url} target="_blank" rel="noreferrer" className={`hover:underline truncate inline-flex items-center gap-1 min-w-0 ${it.isNew ? "text-violet-700" : "text-brand-600"}`}>
+                                  {it.written ? <FileText size={11} className="shrink-0" /> : <ExternalLink size={11} className="shrink-0" />}
+                                  <span className="truncate">{decodePath(it.url)}</span>
+                                  {full && <span className="badge bg-emerald-50 text-emerald-700 shrink-0">התאמה מלאה</span>}
+                                  {it.isNew && <span className="badge bg-violet-100 text-violet-700 shrink-0">חדש — להגדיר כיעד</span>}
+                                </a>
+                                <span className="text-xs text-slate-400 shrink-0">
+                                  {it.position != null ? <>מיקום {it.position} · {(it.impressions || 0).toLocaleString()} חשיפות</> : "טרם מדורג"}
+                                </span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                      {saved && (saved.page_url || saved.intent === "new_page") && (
                         <div className="mt-2 text-xs inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 rounded px-2 py-1">
                           <Check size={12} /> יעד מוגדר: {saved.intent === "new_page" ? `עמוד חדש${saved.page_url ? ` (${decodePath(saved.page_url)})` : ""}` : decodePath(saved.page_url || "")}
                           <button className="text-emerald-600 hover:text-rose-600 mr-1" title="הסר יעד" onClick={() => delTarget.mutate(saved.id)}><X size={12} /></button>
                         </div>
                       )}
-                      <TargetEditor cid={cid} term={term} pages={pgs.map((r) => r.page)} saved={saved} onSaved={invalidateTargets} />
+                      {saved?.notes && (
+                        <div className="mt-2 text-xs inline-flex items-start gap-1 bg-amber-50 text-amber-800 rounded px-2 py-1"><StickyNote size={12} className="mt-0.5 shrink-0" /> {saved.notes}</div>
+                      )}
+                      <TargetEditor cid={cid} term={term} candidates={candidates} newUrls={newUrlSet} saved={saved} onSaved={invalidateTargets} />
+                      <NoteEditor cid={cid} term={term} saved={saved} onSaved={invalidateTargets} />
                     </div>
                   );
                 })}
-                {termList.length === 0 && <p className="text-slate-400 text-sm">לא נמצאו ביטויים.</p>}
+                {termEntries.length === 0 && <p className="text-slate-400 text-sm">לא נמצאו ביטויים.</p>}
               </div>
             ) : (
               <div className="space-y-3">
-                {pageList.map(([page, terms]) => {
+                {pageList.map(({ page, terms, isNew }) => {
                   const total = terms.reduce((s, r) => s + r.impressions, 0);
                   const clicks = terms.reduce((s, r) => s + r.clicks, 0);
                   return (
-                    <div key={page} className="border border-slate-200 rounded-lg overflow-hidden">
-                      <div className="bg-slate-50 px-3 py-2 flex items-center justify-between gap-2">
-                        <a href={page} target="_blank" rel="noreferrer" className="text-sm font-medium text-brand-700 hover:underline truncate inline-flex items-center gap-1 min-w-0"><ExternalLink size={12} className="shrink-0" /><span className="truncate">{decodePath(page)}</span></a>
-                        <span className="text-xs text-slate-400 shrink-0">{terms.length} ביטויים · {total} חשיפות · {clicks} קליקים</span>
+                    <div key={page} className={`border rounded-lg overflow-hidden ${isNew ? "border-violet-300" : "border-slate-200"}`}>
+                      <div className={`px-3 py-2 flex items-center justify-between gap-2 ${isNew ? "bg-violet-50/60" : "bg-slate-50"}`}>
+                        <a href={page} target="_blank" rel="noreferrer" className={`text-sm font-medium hover:underline truncate inline-flex items-center gap-1 min-w-0 ${isNew ? "text-violet-700" : "text-brand-700"}`}>
+                          {isNew ? <FileText size={12} className="shrink-0" /> : <ExternalLink size={12} className="shrink-0" />}
+                          <span className="truncate">{decodePath(page)}</span>
+                          {isNew && <span className="badge bg-violet-100 text-violet-700 shrink-0">חדש — להגדיר כיעד</span>}
+                        </a>
+                        <span className="text-xs text-slate-400 shrink-0">{terms.length ? `${terms.length} ביטויים · ${total.toLocaleString()} חשיפות · ${clicks.toLocaleString()} קליקים` : "טרם מדורג"}</span>
                       </div>
-                      <ul className="divide-y divide-slate-100">
-                        {terms.map((r) => (
-                          <li key={r.term} className="px-3 py-1.5 flex items-center justify-between gap-2 text-sm">
-                            <span className="text-slate-700 truncate">{r.term}</span>
-                            <span className="text-xs text-slate-400 shrink-0">מיקום {r.position} · {r.impressions} חשיפות · {r.clicks} קליקים</span>
-                          </li>
-                        ))}
-                      </ul>
+                      {terms.length > 0 && (
+                        <ul className="divide-y divide-slate-100">
+                          {terms.map((r) => (
+                            <li key={r.term} className="px-3 py-1.5 flex items-center justify-between gap-2 text-sm">
+                              <span className="text-slate-700 truncate">{r.term}</span>
+                              <span className="text-xs text-slate-400 shrink-0">מיקום {r.position} · {r.impressions.toLocaleString()} חשיפות · {r.clicks.toLocaleString()} קליקים</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                   );
                 })}

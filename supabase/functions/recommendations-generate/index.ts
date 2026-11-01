@@ -4,7 +4,7 @@
  * title/meta, improve-page, new-content, cannibalization — each scored with an estimated
  * number of new monthly visits, potential, and effort. Replaces the client's PENDING
  * recommendations; keeps ones already applied/ignored/done (and won't re-suggest them).
- * rev: 2026-10-30a (syncs with keyword_targets: declared target page steers strengthen/new/cannibalization)
+ * rev: 2026-11-01a (keyword_targets note travels into recommendation actions)
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
@@ -59,14 +59,19 @@ Deno.serve(async (req) => {
     }
 
     // #3 sync: the team's declared keyword→page targets steer every recommendation.
-    const { data: ktargets } = await sb.from("keyword_targets").select("keyword, page_url, intent, status").eq("client_id", client_id).eq("status", "active");
-    const targetByTerm = new Map<string, { page: string | null; intent: string }>();
-    for (const t of (ktargets || []) as any[]) targetByTerm.set(t.keyword, { page: t.page_url || null, intent: t.intent });
+    const { data: ktargets } = await sb.from("keyword_targets").select("keyword, page_url, intent, status, notes").eq("client_id", client_id).eq("status", "active");
+    const targetByTerm = new Map<string, { page: string | null; intent: string; notes: string | null }>();
+    for (const t of (ktargets || []) as any[]) targetByTerm.set(t.keyword, { page: t.page_url || null, intent: t.intent, notes: (t.notes || null) });
+    // A team note on a keyword (from the structure tab) is appended to every recommendation on
+    // that term, so the strategic instruction travels into content suggestions and the work plan.
+    const noteSuffix = (term: string) => { const n = targetByTerm.get(term)?.notes; return n ? ` [הערת צוות (מבנה ומילות מפתח): ${n}]` : ""; };
 
     const recs: any[] = [];
     const push = (rec: any) => {
       const dedupe_key = `${rec.type}|${rec.page || ""}|${rec.keyword || ""}`;
       if (done.has(dedupe_key)) return;
+      const suffix = rec.keyword ? noteSuffix(rec.keyword) : "";
+      if (suffix) rec = { ...rec, action: `${rec.action || ""}${suffix}` };
       recs.push({ client_id, status: "pending", dedupe_key, ...rec });
     };
     const monthly = (periodTotal: number) => periodTotal / m;
