@@ -1031,6 +1031,13 @@ export async function publishEditedBlog(clientId: number, f: { title: string; ht
   return await invokeFn("blog-publish-edited", { client_id: clientId, title: f.title, html: f.html, excerpt: f.excerpt || undefined, keyword: f.keyword || undefined, proposal_id: f.proposalId || undefined });
 }
 
+/** #4b: revert a published/history article back to a pending proposal — SYSTEM ONLY.
+ * Does NOT touch the live WordPress post (per the user's choice). */
+export async function revertBlogPost(id: number): Promise<void> {
+  const { error } = await supabase.from("blog_posts").update({ status: "proposed", wp_post_id: null, url: null, error: null }).eq("id", id);
+  if (error) throw error;
+}
+
 /** #1b: the client's known site pages (from GSC), most-visible first, for the internal-links picker. */
 export async function listClientPages(clientId: number): Promise<{ page: string; impressions: number; clicks: number }[]> {
   const { data, error } = await supabase.rpc("client_pages", { p_client_id: clientId });

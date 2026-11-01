@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Newspaper, Loader2, Plug, Check, ExternalLink, Trash2, Send, CalendarClock, AlertTriangle, Save, Lightbulb, X, Pencil, MessageCircle, Link2, Plus } from "lucide-react";
+import { Newspaper, Loader2, Plug, Check, ExternalLink, Trash2, Send, CalendarClock, AlertTriangle, Save, Lightbulb, X, Pencil, MessageCircle, Link2, Plus, ChevronDown, ChevronUp, RotateCcw, Target } from "lucide-react";
 import * as api from "../api";
 import type { BlogPost } from "../api";
 import PageHeader from "../components/PageHeader";
 import Spinner from "../components/Spinner";
+import ArticleEditor, { type ArticleEditorHandle } from "../components/ArticleEditor";
 import TaskAssistant, { AssistantFab } from "./TaskAssistant";
 import type { AssistantSeed } from "./TaskAssistant";
 
@@ -72,26 +73,31 @@ function ProposalCard({ cid, p, client }: { cid: number; p: BlogPost; client?: {
   const [srcList, setSrcList] = useState<string[]>(p.sources && p.sources.length ? p.sources : [""]);
   const cleanSources = srcList.map((s) => s.trim()).filter((s) => /^https?:\/\//i.test(s));
 
-  // #1b: opt-in internal links — the user picks which site pages to link to (and the anchor).
+  // #3: internal links are chosen AFTER the sample is generated, then woven into the article.
   const [ilOpen, setIlOpen] = useState(false);
   const [ilSel, setIlSel] = useState<api.InternalLink[]>([]);
   const { data: pages } = useQuery({ queryKey: ["client-pages", cid], queryFn: () => api.listClientPages(cid), enabled: ilOpen });
+  const { data: ktargets } = useQuery({ queryKey: ["kw-targets", cid], queryFn: () => api.listKeywordTargets(cid), enabled: ilOpen });
+  const targetPages = new Set((ktargets || []).filter((t) => t.page_url).map((t) => t.page_url as string));
   const cleanInternalLinks = ilSel.filter((l) => /^https?:\/\//i.test(l.url));
   const toggleIl = (url: string) => setIlSel((l) => l.some((x) => x.url === url) ? l.filter((x) => x.url !== url) : [...l, { url, anchor: "" }]);
   const setIlAnchor = (url: string, anchor: string) => setIlSel((l) => l.map((x) => x.url === url ? { ...x, anchor } : x));
 
-  // #1a: edit the generated sample before publishing it as-is.
-  const [editMode, setEditMode] = useState(false);
+  // #1a + #2b: edit the generated sample (WYSIWYG) and publish it as-is.
+  const editorRef = useRef<ArticleEditorHandle>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editExcerpt, setEditExcerpt] = useState("");
-  const [editBody, setEditBody] = useState("");
+  const [linksAdded, setLinksAdded] = useState(0);
 
-  const approve = useMutation({ mutationFn: (mod?: string) => api.approveBlogProposal(p.id, mod, cleanInternalLinks), onSuccess: invalidate });
+  const approve = useMutation({ mutationFn: (mod?: string) => api.approveBlogProposal(p.id, mod), onSuccess: invalidate });
   const reject = useMutation({ mutationFn: () => api.rejectBlogProposal(p.id), onSuccess: invalidate });
   const markDone = useMutation({ mutationFn: () => api.setBlogPostDone(p.id), onSuccess: invalidate });
-  const sample = useMutation({ mutationFn: () => api.sampleBlog(cid, p.keyword || undefined, cleanSources, modOpen ? modText.trim() : undefined, cleanInternalLinks), onSuccess: () => setEditMode(false) });
-  const publishEdited = useMutation({ mutationFn: () => api.publishEditedBlog(cid, { title: editTitle, html: editBody, excerpt: editExcerpt, keyword: p.keyword || undefined, proposalId: p.id }), onSuccess: invalidate });
-  const startEdit = () => { if (!sample.data) return; setEditTitle(sample.data.title || ""); setEditExcerpt(sample.data.excerpt || ""); setEditBody(sample.data.body || sample.data.preview || ""); setEditMode(true); };
+  const sample = useMutation({
+    mutationFn: () => api.sampleBlog(cid, p.keyword || undefined, cleanSources, modOpen ? modText.trim() : undefined),
+    onSuccess: (data) => { setEditTitle(data.title || ""); setEditExcerpt(data.excerpt || ""); setLinksAdded(0); },
+  });
+  const publishEdited = useMutation({ mutationFn: () => api.publishEditedBlog(cid, { title: editTitle, html: editorRef.current?.getHtml() || "", excerpt: editExcerpt, keyword: p.keyword || undefined, proposalId: p.id }), onSuccess: invalidate });
+  const addLinksToArticle = () => { editorRef.current?.insertLinks(cleanInternalLinks); setLinksAdded(cleanInternalLinks.length); };
   const saveSources = useMutation({ mutationFn: () => api.setBlogProposalSources(p.id, cleanSources), onSuccess: invalidate });
   const savedCount = (p.sources || []).length;
 
@@ -121,9 +127,6 @@ function ProposalCard({ cid, p, client }: { cid: number; p: BlogPost; client?: {
         <button className="btn-secondary text-sm py-1.5" onClick={() => setModOpen((o) => !o)}><Pencil size={15} /> בצע עם שינוי</button>
         <button className={`btn-secondary text-sm py-1.5 ${savedCount ? "text-brand-700 border-brand-200 bg-brand-50" : ""}`} onClick={() => setSrcOpen((o) => !o)}>
           <Link2 size={15} /> הוספת מקורות{savedCount ? ` (${savedCount})` : ""}
-        </button>
-        <button className={`btn-secondary text-sm py-1.5 ${cleanInternalLinks.length ? "text-brand-700 border-brand-200 bg-brand-50" : ""}`} onClick={() => setIlOpen((o) => !o)}>
-          <Link2 size={15} /> קישורים פנימיים{cleanInternalLinks.length ? ` (${cleanInternalLinks.length})` : ""}
         </button>
         <button className={`btn-secondary text-sm py-1.5 ${markDone.isSuccess ? "text-emerald-700 border-emerald-200 bg-emerald-50" : ""}`} onClick={() => markDone.mutate()} disabled={markDone.isPending || markDone.isSuccess}>
           {markDone.isPending ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} className={markDone.isSuccess ? "text-emerald-600" : ""} />} בוצע
@@ -162,72 +165,66 @@ function ProposalCard({ cid, p, client }: { cid: number; p: BlogPost; client?: {
         </div>
       )}
 
-      {ilOpen && (
-        <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
-          <p className="text-xs text-slate-500 mb-2">בחר לאילו עמודים באתר לקשר מתוך המאמר (קישורים פנימיים). רק מה שתסמן ישולב — עם ה-URL המדויק. בלי סימון, לא יתווספו קישורים פנימיים כלל.</p>
-          {!pages ? (
-            <div className="text-xs text-slate-400 flex items-center gap-1"><Loader2 size={13} className="animate-spin" /> טוען עמודים...</div>
-          ) : pages.length === 0 ? (
-            <div className="text-xs text-slate-400">לא נמצאו עמודים (צריך נתוני Search Console ללקוח).</div>
-          ) : (
-            <div className="max-h-56 overflow-y-auto divide-y divide-slate-100">
-              {pages.map((pg) => {
-                const sel = ilSel.find((x) => x.url === pg.page);
-                const label = (() => { try { return decodeURIComponent(pg.page.replace(/^https?:\/\/[^/]+/, "")) || pg.page; } catch { return pg.page; } })();
-                return (
-                  <div key={pg.page} className="py-1.5">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" className="h-4 w-4 accent-brand-600 shrink-0" checked={!!sel} onChange={() => toggleIl(pg.page)} />
-                      <span className="text-sm text-slate-700 truncate flex-1" title={pg.page}>{label}</span>
-                      <span className="text-xs text-slate-400 shrink-0">{pg.impressions} חשיפות</span>
-                    </label>
-                    {sel && (
-                      <input className="input text-xs py-1 mt-1 mr-6" placeholder='טקסט עוגן מועדף (אופציונלי — למשל "כתב כמויות")'
-                        value={sel.anchor || ""} onChange={(e) => setIlAnchor(pg.page, e.target.value)} />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {cleanInternalLinks.length > 0 && <div className="text-xs text-emerald-600 mt-2">{cleanInternalLinks.length} קישורים נבחרו — ישולבו ב"צור דוגמה"/"בצע".</div>}
-        </div>
-      )}
-
       {sample.isError && <div className="text-sm text-rose-600 mt-2">{(sample.error as any)?.message}</div>}
-      {sample.data && !editMode && (
-        <div className="mt-3 border border-slate-200 rounded-lg p-3 bg-white">
-          <div className="flex items-center justify-between gap-2 mb-1">
-            <div className="text-xs text-emerald-600">דוגמה — המאמר המלא שייכתב (לא נשמר/פורסם)</div>
-            <button className="btn-secondary text-xs py-1 px-2" onClick={startEdit}><Pencil size={13} /> ערוך והוסף טקסט משלך</button>
-          </div>
-          <div className="font-semibold text-slate-900 text-lg">{sample.data.title}</div>
-          {sample.data.keyword && <div className="text-xs text-slate-400">מילת מפתח: {sample.data.keyword}</div>}
-          {sample.data.excerpt && <div className="text-sm text-slate-500 italic mt-1">{sample.data.excerpt}</div>}
-          {sample.data.body ? (
-            <div
-              className="prose prose-sm prose-slate max-w-none mt-3 max-h-[480px] overflow-y-auto border-t border-slate-100 pt-3 text-slate-700 leading-relaxed [&_h2]:font-bold [&_h2]:text-base [&_h2]:mt-3 [&_h3]:font-semibold [&_ul]:list-disc [&_ul]:pr-5 [&_p]:my-2"
-              dangerouslySetInnerHTML={{ __html: sample.data.body }}
-            />
-          ) : (
-            <div className="text-sm text-slate-700 whitespace-pre-wrap mt-2">{sample.data.preview || "—"}</div>
-          )}
-        </div>
-      )}
-      {sample.data && editMode && (
+      {sample.data && (
         <div className="mt-3 border border-brand-200 rounded-lg p-3 bg-white">
-          <div className="text-xs text-brand-600 mb-2">עריכה — הוסף/שנה טקסט כרצונך (הגוף ב-HTML: &lt;h2&gt;, &lt;p&gt;, &lt;ul&gt;&lt;li&gt;). לחיצה על "פרסם" תעלה בדיוק את מה שכאן.</div>
+          <div className="text-xs text-emerald-600 mb-2">הדוגמה מוכנה — ערוך את הטקסט ישירות (בלי קוד), הוסף קישורים פנימיים, ואז "פרסם את הגרסה הזו". שום דבר לא עולה לאתר עד שתלחץ פרסם.</div>
           <label className="block text-xs text-slate-500 mb-1">כותרת</label>
           <input className="input mb-2" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
           <label className="block text-xs text-slate-500 mb-1">תיאור מטא (Excerpt)</label>
           <input className="input mb-2" value={editExcerpt} onChange={(e) => setEditExcerpt(e.target.value)} />
-          <label className="block text-xs text-slate-500 mb-1">גוף המאמר (HTML)</label>
-          <textarea className="input font-mono text-xs leading-relaxed" rows={16} value={editBody} onChange={(e) => setEditBody(e.target.value)} />
-          <div className="flex items-center gap-2 mt-2 flex-wrap">
-            <button className="btn-primary text-sm py-1.5" onClick={() => publishEdited.mutate()} disabled={publishEdited.isPending || !editTitle.trim() || editBody.trim().length < 40}>
+          <label className="block text-xs text-slate-500 mb-1">גוף המאמר</label>
+          <ArticleEditor ref={editorRef} initialHtml={sample.data.body || sample.data.preview || ""} />
+
+          {/* #3: internal links — chosen after the article exists, then woven in */}
+          <div className="mt-3 border-t border-slate-100 pt-3">
+            <button className="btn-secondary text-sm py-1.5" onClick={() => setIlOpen((o) => !o)}>
+              <Link2 size={15} /> קישורים פנימיים{cleanInternalLinks.length ? ` (${cleanInternalLinks.length} נבחרו)` : ""} {ilOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+            {ilOpen && (
+              <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                <p className="text-xs text-slate-500 mb-2">בחר עמודים רלוונטיים לקישור מתוך המאמר. עמוד שסומן כיעד בלשונית "אופטימיזציית מבנה ומילות מפתח" מסומן כ-<span className="text-brand-700 font-medium">עמוד יעד</span> (כדאי לקשר אליו).</p>
+                {!pages ? (
+                  <div className="text-xs text-slate-400 flex items-center gap-1"><Loader2 size={13} className="animate-spin" /> טוען עמודים...</div>
+                ) : pages.length === 0 ? (
+                  <div className="text-xs text-slate-400">לא נמצאו עמודים (צריך נתוני Search Console ללקוח).</div>
+                ) : (
+                  <div className="max-h-56 overflow-y-auto divide-y divide-slate-100">
+                    {[...pages].sort((a, b) => (targetPages.has(b.page) ? 1 : 0) - (targetPages.has(a.page) ? 1 : 0)).map((pg) => {
+                      const sel = ilSel.find((x) => x.url === pg.page);
+                      const isTarget = targetPages.has(pg.page);
+                      const label = (() => { try { return decodeURIComponent(pg.page.replace(/^https?:\/\/[^/]+/, "")) || pg.page; } catch { return pg.page; } })();
+                      return (
+                        <div key={pg.page} className="py-1.5">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" className="h-4 w-4 accent-brand-600 shrink-0" checked={!!sel} onChange={() => toggleIl(pg.page)} />
+                            <span className="text-sm text-slate-700 truncate flex-1" title={pg.page}>{label}</span>
+                            {isTarget && <span className="badge bg-brand-50 text-brand-700 inline-flex items-center gap-0.5 shrink-0"><Target size={10} /> עמוד יעד</span>}
+                            <span className="text-xs text-slate-400 shrink-0">{pg.impressions} חשיפות</span>
+                          </label>
+                          {sel && (
+                            <input className="input text-xs py-1 mt-1 mr-6" placeholder="טקסט עוגן מועדף (אופציונלי)"
+                              value={sel.anchor || ""} onChange={(e) => setIlAnchor(pg.page, e.target.value)} />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <div className="flex items-center gap-2 mt-2">
+                  <button className="btn-primary text-sm py-1" onClick={addLinksToArticle} disabled={cleanInternalLinks.length === 0}>
+                    <Plus size={14} /> הוסף קישורים למאמר
+                  </button>
+                  {linksAdded > 0 && <span className="text-xs text-emerald-600">{linksAdded} קישורים נוספו למאמר ✓ (ניתן לערוך/להסיר בעורך למעלה)</span>}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 mt-3 flex-wrap border-t border-slate-100 pt-3">
+            <button className="btn-primary text-sm py-1.5" onClick={() => publishEdited.mutate()} disabled={publishEdited.isPending || !editTitle.trim()}>
               {publishEdited.isPending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} פרסם את הגרסה הזו
             </button>
-            <button className="btn-secondary text-sm py-1.5" onClick={() => setEditMode(false)}><X size={15} /> בטל עריכה</button>
             {publishEdited.isSuccess && <span className="text-sm text-emerald-600">פורסם ✓ {publishEdited.data?.url && <a href={publishEdited.data.url} target="_blank" rel="noreferrer" className="underline">צפה</a>}</span>}
             {publishEdited.isError && <span className="text-sm text-rose-600">{(publishEdited.error as any)?.message}</span>}
           </div>
@@ -255,9 +252,10 @@ export default function BlogPage() {
   const disconnect = useMutation({ mutationFn: () => api.disconnectWordpress(cid), onSuccess: invalidate });
   const publishNow = useMutation({ mutationFn: () => api.publishBlogNow(cid), onSuccess: invalidate });
   const propose = useMutation({ mutationFn: () => api.proposeBlog(cid), onSuccess: invalidate });
+  const revert = useMutation({ mutationFn: (id: number) => api.revertBlogPost(id), onSuccess: invalidate });
 
   const [bridgeSecret, setBridgeSecret] = useState("");
-  const [historyMonth, setHistoryMonth] = useState("");
+  const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState<AssistantSeed | null>(null);
   const askContent = () => { setChatSeed({ title: "כתיבת תוכן לבלוג", nonce: Date.now(), context: `התייעצות על כתיבת תוכן/מאמרים לבלוג של ${client?.name || "הלקוח"} (${client?.domain || ""}). נושאים: רעיונות למאמרים, מבנה, טון, מילות מפתח, שיפור טיוטות.` }); setChatOpen(true); };
@@ -364,43 +362,52 @@ export default function BlogPage() {
             </div>
           )}
 
-          {/* History */}
+          {/* History — grouped into month/year folders (#4a) */}
           {(() => {
             const history = (posts || []).filter((p) => ["publish", "draft", "error", "done"].includes(p.status || ""));
-            const months = [...new Set(history.map((p) => (p.created_at || "").slice(0, 7)).filter(Boolean))].sort().reverse();
+            const groups = new Map<string, BlogPost[]>();
+            for (const p of history) { const k = (p.created_at || "").slice(0, 7); if (!groups.has(k)) groups.set(k, []); groups.get(k)!.push(p); }
+            const monthKeys = [...groups.keys()].filter(Boolean).sort().reverse();
             const monthLabel = (m: string) => new Date(m + "-01T00:00:00").toLocaleDateString("he-IL", { month: "long", year: "numeric" });
-            const shown = historyMonth ? history.filter((p) => (p.created_at || "").slice(0, 7) === historyMonth) : history;
+            const isOpen = (k: string) => openFolders[k] ?? (k === monthKeys[0]);
             return (
           <div className="card">
-            <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-              <h3 className="font-semibold flex items-center gap-2 text-slate-800"><Newspaper size={18} /> היסטוריית מאמרים</h3>
-              {months.length > 0 && (
-                <select className="input py-1 text-sm w-auto" value={historyMonth} onChange={(e) => setHistoryMonth(e.target.value)}>
-                  <option value="">כל החודשים</option>
-                  {months.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
-                </select>
-              )}
-            </div>
+            <h3 className="font-semibold flex items-center gap-2 text-slate-800 mb-3"><Newspaper size={18} /> היסטוריית מאמרים</h3>
             {history.length === 0 ? (
               <p className="text-slate-400 text-sm">עדיין לא פורסמו מאמרים. {wp.require_approval ? 'לחץ "הצע נושא" לקבלת הצעה' : 'לחץ "כתוב ופרסם עכשיו"'} או המתן לריצה השבועית.</p>
-            ) : shown.length === 0 ? (
-              <p className="text-slate-400 text-sm">אין מאמרים בחודש שנבחר.</p>
             ) : (
-              <ul className="divide-y divide-slate-100">
-                {shown.map((p: BlogPost) => (
-                  <li key={p.id} className="py-3 flex items-start gap-3">
-                    <span className={`badge ${STATUS_BADGE[p.status || ""] || "bg-slate-100 text-slate-600"} shrink-0 mt-0.5`}>{STATUS_LABEL[p.status || ""] || p.status}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-slate-900">{p.title}</div>
-                      <div className="text-xs text-slate-400">
-                        {p.keyword && <>מילה: {p.keyword} · </>}{new Date(p.created_at).toLocaleString("he-IL")}
-                      </div>
-                      {p.error && <div className="text-xs text-rose-600 mt-0.5 break-words">{p.error}</div>}
-                    </div>
-                    {p.url && <a href={p.url} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline text-sm inline-flex items-center gap-1 shrink-0"><ExternalLink size={13} /> צפה</a>}
-                  </li>
+              <div className="space-y-2">
+                {monthKeys.map((mk) => (
+                  <div key={mk} className="border border-slate-200 rounded-lg overflow-hidden">
+                    <button className="w-full flex items-center justify-between gap-2 bg-slate-50 px-3 py-2 text-right" onClick={() => setOpenFolders((o) => ({ ...o, [mk]: !isOpen(mk) }))}>
+                      <span className="font-medium text-slate-700 flex items-center gap-2">{isOpen(mk) ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />} {monthLabel(mk)}</span>
+                      <span className="text-xs text-slate-400">{groups.get(mk)!.length} מאמרים</span>
+                    </button>
+                    {isOpen(mk) && (
+                      <ul className="divide-y divide-slate-100">
+                        {groups.get(mk)!.map((p: BlogPost) => (
+                          <li key={p.id} className="py-3 px-3 flex items-start gap-3">
+                            <span className={`badge ${STATUS_BADGE[p.status || ""] || "bg-slate-100 text-slate-600"} shrink-0 mt-0.5`}>{STATUS_LABEL[p.status || ""] || p.status}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-slate-900">{p.title}</div>
+                              <div className="text-xs text-slate-400">
+                                {p.keyword && <>מילה: {p.keyword} · </>}{new Date(p.created_at).toLocaleString("he-IL")}
+                              </div>
+                              {p.error && <div className="text-xs text-rose-600 mt-0.5 break-words">{p.error}</div>}
+                            </div>
+                            {p.url && <a href={p.url} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline text-sm inline-flex items-center gap-1 shrink-0"><ExternalLink size={13} /> צפה</a>}
+                            <button className="text-slate-400 hover:text-amber-600 text-xs inline-flex items-center gap-1 shrink-0" title="החזר למצב 'לא נכתב' (רק במערכת — לא נוגע באתר)"
+                              onClick={() => { if (confirm("להחזיר את המאמר למצב 'ממתין' (הצעה)? זה לא נוגע בפוסט באתר — רק מחזיר את הרשומה במערכת לעריכה/כתיבה מחדש.")) revert.mutate(p.id); }}
+                              disabled={revert.isPending && revert.variables === p.id}>
+                              {revert.isPending && revert.variables === p.id ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />} החזר
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                 ))}
-              </ul>
+              </div>
             )}
           </div>
             );
