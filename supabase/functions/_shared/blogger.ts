@@ -121,6 +121,17 @@ export async function writeAndPublish(sb: any, clientId: number, keyword: string
     .map((z) => `${z.keyword}${z.local_searches ? ` (${z.local_searches} חיפושים${z.ranking ? `, מיקום ${z.ranking}` : ""})` : ""}`);
   const instructions = (cw?.blog_instructions || "").trim();
 
+  // Part 2: if this keyword has a target page with attached secondary keywords, weave them in too.
+  let secondaryKws: string[] = [];
+  try {
+    const { data: kt } = await sb.from("keyword_targets").select("page_url").eq("client_id", clientId).eq("keyword", keyword).maybeSingle();
+    if (kt?.page_url) {
+      const { data: pk } = await sb.from("page_keywords").select("keyword").eq("client_id", clientId).eq("page_url", kt.page_url);
+      secondaryKws = [...new Set(((pk || []) as any[]).map((r) => r.keyword).filter((k) => k && k !== keyword))].slice(0, 10);
+    }
+  } catch (_e) { /* secondary keywords are optional */ }
+  const secondaryRule = secondaryKws.length ? "שלב באופן טבעי גם את ביטויי המשנה שהוגדרו לעמוד (ראה רשימה למטה) — כותרות משנה/פסקאות סביבם, בלי לפגוע במיקוד של מילת המפתח הראשית. " : "";
+
   // Reference sources (#5c): fetch each URL the user attached and require the writer to draw on them.
   const sourceUrls = (opts.sources || []).filter((u) => typeof u === "string" && /^https?:\/\//i.test(u)).slice(0, 5);
   let sourcesBlock = "";
@@ -151,6 +162,7 @@ export async function writeAndPublish(sb: any, clientId: number, keyword: string
   const system =
     "אתה כותב תוכן SEO מקצועי בעברית לבלוג עסקי. כתוב מאמר איכותי, מקורי ומועיל סביב מילת המפתח — כותרת ממוקדת-SEO, מבנה H2/H3, פסקאות ורשימות. " + lengthRule +
     "שלב את מילת המפתח באופן טבעי ושזור מונחים קשורים מהרשימה שסופקה. אל תמציא עובדות/מספרים/מחירים שאינך יכול לאמת. " +
+    secondaryRule +
     (hasSources ? "חובה: התבסס על חומרי המקור שסופקו למטה — קח מהם רעיונות, נקודות, זוויות וטקסטים, שלב אותם בצורה מקורית (בלי העתקה מילולית) והתייחס לכל אחד מהמקורות. " : "") +
     (instructions ? `הנחיות חובה של הצוות (כבד תמיד): ${instructions}\n` : "") +
     (opts.modification && opts.modification.trim() ? `שינוי/הנחיה נוספת לכתיבה הספציפית הזו (חובה לכבד): ${opts.modification.trim()}\n` : "") +
@@ -166,6 +178,7 @@ export async function writeAndPublish(sb: any, clientId: number, keyword: string
     `עסק: ${client.name} (${client.domain}). הערות: ${client.notes || "—"}.\n` +
     `מילת מפתח יעד: "${keyword}".\n` +
     (related.length ? `מילות מפתח קשורות (ZEFO): ${related.join(" | ")}.\n` : "") +
+    (secondaryKws.length ? `ביטויי משנה שהוגדרו לעמוד היעד (שלב אותם): ${secondaryKws.join(" | ")}.\n` : "") +
     (hasSources ? `\n=== חומרי מקור שעליך להתבסס עליהם (חובה) ===\n${sourcesBlock}\n=== סוף חומרי המקור ===\n` : "") +
     (internalLinks.length ? `\n=== קישורים פנימיים לשילוב (השתמש בכתובות המדויקות, ורק בהן) ===\n${internalLinksBlock}\n=== סוף הקישורים הפנימיים ===\n` : "") +
     `כתוב מאמר בלוג שיווקי-מקצועי.`;

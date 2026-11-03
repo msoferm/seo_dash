@@ -860,6 +860,34 @@ export async function deleteKeywordTarget(id: number): Promise<void> {
   if (error) throw error;
 }
 
+// --- Part 2: secondary keywords attached to a page ("עמודי יעד וביטויי משנה") ---
+export interface PageKeyword { id: number; client_id: number; page_url: string; keyword: string; role: string; created_at: string }
+export async function listPageKeywords(clientId: number): Promise<PageKeyword[]> {
+  const { data, error } = await supabase.from("page_keywords").select("*").eq("client_id", clientId);
+  if (error) throw error;
+  return (data || []) as PageKeyword[];
+}
+export async function addPageKeyword(clientId: number, pageUrl: string, keyword: string, role = "secondary"): Promise<void> {
+  const { error } = await supabase.from("page_keywords").upsert({ client_id: clientId, page_url: pageUrl, keyword, role }, { onConflict: "client_id,page_url,keyword" });
+  if (error) throw error;
+}
+export async function deletePageKeyword(id: number): Promise<void> {
+  const { error } = await supabase.from("page_keywords").delete().eq("id", id);
+  if (error) throw error;
+}
+/** "שים כרגע בצד" — set a keyword aside with no page decision yet. */
+export async function parkKeyword(clientId: number, keyword: string): Promise<void> {
+  await upsertKeywordTarget(clientId, { keyword, page_url: null, intent: "strengthen", status: "parked" });
+}
+/** Move / attach a keyword to a specific target page ("העבר לעמוד אחר"). */
+export async function moveKeywordToPage(clientId: number, keyword: string, pageUrl: string): Promise<void> {
+  await upsertKeywordTarget(clientId, { keyword, page_url: pageUrl, intent: "strengthen", status: "active" });
+}
+/** "דורש עמוד חדש" — mark a keyword as needing its own new page. */
+export async function markKeywordNewPage(clientId: number, keyword: string): Promise<void> {
+  await upsertKeywordTarget(clientId, { keyword, page_url: null, intent: "new_page", status: "active" });
+}
+
 // Phase 3 — SEO tools
 export type AuditSeverity = "high" | "medium" | "low";
 export type AuditStatus = "pending" | "applied" | "rejected";

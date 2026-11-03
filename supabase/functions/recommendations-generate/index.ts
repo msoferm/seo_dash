@@ -4,7 +4,7 @@
  * title/meta, improve-page, new-content, cannibalization — each scored with an estimated
  * number of new monthly visits, potential, and effort. Replaces the client's PENDING
  * recommendations; keeps ones already applied/ignored/done (and won't re-suggest them).
- * rev: 2026-11-01a (keyword_targets note travels into recommendation actions)
+ * rev: 2026-11-03a (secondary keywords per page → on-page optimization recommendation)
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
@@ -65,6 +65,11 @@ Deno.serve(async (req) => {
     // A team note on a keyword (from the structure tab) is appended to every recommendation on
     // that term, so the strategic instruction travels into content suggestions and the work plan.
     const noteSuffix = (term: string) => { const n = targetByTerm.get(term)?.notes; return n ? ` [הערת צוות (מבנה ומילות מפתח): ${n}]` : ""; };
+
+    // Part 2 sync: secondary keywords the team attached to a page ("עמודי יעד וביטויי משנה").
+    const { data: pageKwData } = await sb.from("page_keywords").select("page_url, keyword, role").eq("client_id", client_id);
+    const secondaryByPage = new Map<string, string[]>();
+    for (const pk of (pageKwData || []) as any[]) { const u = pk.page_url; if (!secondaryByPage.has(u)) secondaryByPage.set(u, []); secondaryByPage.get(u)!.push(pk.keyword); }
 
     const recs: any[] = [];
     const push = (rec: any) => {
@@ -163,6 +168,21 @@ Deno.serve(async (req) => {
           });
         }
       }
+    }
+
+    // Part 2: each page with attached secondary keywords gets an on-page optimization rec,
+    // so the decision flows into content suggestions, the work plan and impact tracking.
+    for (const [pageUrl, kws] of secondaryByPage) {
+      if (!kws.length) continue;
+      const uniq = [...new Set(kws)];
+      push({
+        type: "improve_page", source: "structure", page: pageUrl, keyword: uniq[0],
+        title: `אופטימיזציית ביטויי משנה: ${uniq.slice(0, 3).join(", ")}${uniq.length > 3 ? "…" : ""}`,
+        opportunity: `הוגדרו ${uniq.length} ביטויי משנה לעמוד זה בלשונית "עמודי יעד וביטויי משנה" — יש לבצע אופטימיזציה לעמוד גם עבורם.`,
+        whats_missing: "העמוד לא מכסה מספיק את ביטויי המשנה שנבחרו (כותרות, פסקאות, מונחים קשורים).",
+        action: `חזק את העמוד עבור ביטויי המשנה: ${uniq.join(", ")} — הוסף כותרות משנה/פסקאות/שאלות סביבם, שלב אותם בטקסט ובקישורים פנימיים, ושמור על ביטוי היעד הראשי כמוקד.`,
+        potential: "medium", est_visits: 0, effort: "medium", confidence: "medium", score: 40,
+      });
     }
 
     // Performance drops: recent half vs prior half
