@@ -14,7 +14,7 @@ export const CLIENT_NAV: NavItemDef[] = [
   { key: "chat", label: "צ׳אט עם קלוד", suffix: "/chat", icon: MessageSquare },
   { key: "tasks", label: "לוח משימות", suffix: "/tasks", icon: ClipboardList },
   { key: "reports", label: "דוחות קידום", suffix: "/reports", icon: FileText },
-  { key: "structure", label: "אופטימיזציית מבנה ומילות מפתח", suffix: "/structure", icon: Network },
+  { key: "structure", label: "ביטויי יעד ועמודי יעד", suffix: "/structure", icon: Network },
   { key: "engine", label: "מנוע המלצות", suffix: "/engine", icon: Sparkles },
   { key: "pages", label: "עמודים", suffix: "/pages", icon: LayoutList },
   { key: "impact", label: "מעקב השפעה", suffix: "/impact", icon: Activity },
