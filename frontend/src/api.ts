@@ -888,6 +888,34 @@ export async function markKeywordNewPage(clientId: number, keyword: string): Pro
   await upsertKeywordTarget(clientId, { keyword, page_url: null, intent: "new_page", status: "active" });
 }
 
+// --- Part 3: user-intent & page analysis ("כוונת המשתמש") ---
+export interface PageIntent {
+  id: number; client_id: number; page_url: string;
+  intent_analysis: string | null; page_analysis: string | null; conclusions: string | null;
+  quality_score: number | null; primary_keywords: string[] | null; secondary_keywords: string[] | null;
+  saved_summary: string | null; created_at: string; updated_at: string;
+}
+export async function listPageIntent(clientId: number): Promise<PageIntent[]> {
+  const { data, error } = await supabase.from("page_intent").select("*").eq("client_id", clientId);
+  if (error) throw error;
+  return (data || []) as PageIntent[];
+}
+export async function savePageIntent(clientId: number, pageUrl: string, body: Partial<Omit<PageIntent, "id" | "client_id" | "page_url" | "created_at" | "updated_at">>): Promise<void> {
+  const { error } = await supabase.from("page_intent").upsert(
+    { client_id: clientId, page_url: pageUrl, ...body, updated_at: new Date().toISOString() },
+    { onConflict: "client_id,page_url" },
+  );
+  if (error) throw error;
+}
+export interface IntentAnalysisResult { intent_analysis?: string; page_analysis?: string; conclusions?: string; quality_score?: number | null; title?: string; meta_description?: string; fetched?: boolean; answer?: string }
+export async function analyzePageIntent(clientId: number, params: {
+  page_url: string; action: "intent" | "page" | "consult";
+  primary_keywords?: string[]; secondary_keywords?: string[];
+  intent_analysis?: string; page_analysis?: string; conclusions?: string; question?: string;
+}): Promise<IntentAnalysisResult> {
+  return await invokeFn("page-intent", { client_id: clientId, ...params });
+}
+
 // Phase 3 — SEO tools
 export type AuditSeverity = "high" | "medium" | "low";
 export type AuditStatus = "pending" | "applied" | "rejected";

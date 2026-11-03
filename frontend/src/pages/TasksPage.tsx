@@ -30,7 +30,8 @@ type Action = "execute" | "done" | "ignore" | "reopen";
 
 function deepLink(cid: number, t: Task): { href: string; label: string } | null {
   if (t.source_type === "recommendation") return { href: `/clients/${cid}/engine`, label: "מנוע המלצות" };
-  if (t.source_type === "keyword_target") return { href: `/clients/${cid}/structure`, label: "מבנה ומילות מפתח" };
+  if (t.source_type === "keyword_target") return { href: `/clients/${cid}/structure`, label: "ביטויי יעד ועמודי יעד" };
+  if (t.source_type === "page_intent") return { href: `/clients/${cid}/user-intent`, label: "כוונת המשתמש" };
   if (t.source_type === "audit") return { href: `/clients/${cid}/seo-tools`, label: "כלי SEO" };
   if (t.source_ref === "forums" || t.source_ref === "prospects") return { href: `/clients/${cid}/prospects`, label: "איתור קישורים" };
   if (t.source_ref === "faq") return { href: `/clients/${cid}/pages`, label: "עמודים / FAQ" };

@@ -1,6 +1,6 @@
 /**
  * POST { proposal_id }  — semi-auto step 2: write & publish the approved topic.
- * rev: 2026-11-03a (writer weaves in a page's secondary keywords)
+ * rev: 2026-11-03b (writer honors a page's secondary keywords + user-intent analysis)
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";

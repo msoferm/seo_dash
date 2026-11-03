@@ -2,7 +2,7 @@
  * POST { client_id }  (user-triggered "write & publish now")
  * Generates an SEO article from the client's opportunities and publishes it to their
  * WordPress. Returns the result.
- * rev: 2026-11-03a (writer weaves in a page's secondary keywords)
+ * rev: 2026-11-03b (writer honors a page's secondary keywords + user-intent analysis)
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";

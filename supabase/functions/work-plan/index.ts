@@ -8,7 +8,7 @@
  * reason, sensible defaults are used, so a plan is always produced.
  *
  * Replaces any previous generated plan (source='plan'); manual/upload tasks are untouched.
- * rev: 2026-11-01a (keyword_targets note carried into the task details)
+ * rev: 2026-11-03a (saved user-intent conclusions become executable tasks)
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
@@ -94,6 +94,9 @@ Deno.serve(async (req) => {
     // #3 sync: the declared keyword→page targets (from the structure tab).
     const { data: ktData } = await sb.from("keyword_targets").select("keyword, page_url, intent, notes").eq("client_id", client_id).eq("status", "active");
     const ktargets = (ktData || []) as any[];
+    // Part 3 sync: saved user-intent analyses steer the plan (conclusions become executable tasks).
+    const { data: intentData } = await sb.from("page_intent").select("page_url, conclusions, quality_score, primary_keywords").eq("client_id", client_id);
+    const intents = (intentData || []) as any[];
 
     const subs: Sub[] = [];
     const push = (s: Partial<Sub> & { pillar: string; kind: string; title: string; source_type: string; source_ref: string; key: string }) =>
@@ -129,6 +132,20 @@ Deno.serve(async (req) => {
       } else {
         push({ key: `kt:${kw}`, pillar: "content", kind: "claude", title: `חיזוק עמוד היעד לביטוי "${kw}"`, details: `חזק את עמוד היעד ${t.page_url || "(ללא URL)"} — כותרת/תיאור/תוכן/קישורים פנימיים, ומניעת קניבליזציה.${noteLine}`, source_type: "keyword_target", source_ref: kw, page_url: t.page_url || null, priority: "medium", impact: "high", writes_text: true });
       }
+    }
+
+    // --- Part 3: a task per page with a saved user-intent analysis (apply its conclusions) ---
+    for (const it of intents) {
+      const concl = (it.conclusions || "").trim();
+      if (!concl) continue;
+      const kw = (it.primary_keywords || [])[0] || "";
+      push({
+        key: `intent:${it.page_url}`, pillar: "content", kind: "claude",
+        title: `יישום מסקנות כוונת המשתמש${kw ? ` לביטוי "${kw}"` : ""}`,
+        details: `לפי ניתוח כוונת המשתמש של העמוד${it.quality_score != null ? ` (ציון איכות נוכחי ${it.quality_score}/10)` : ""}: ${concl.slice(0, 400)}`,
+        source_type: "page_intent", source_ref: it.page_url, page_url: it.page_url,
+        priority: it.quality_score != null && it.quality_score <= 5 ? "high" : "medium", impact: "high", writes_text: true,
+      });
     }
 
     // --- Deterministic advisory (always reliable) ---
