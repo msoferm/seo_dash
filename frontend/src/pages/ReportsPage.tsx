@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Plus, Trash2, Loader2, ArrowLeft, Sparkles, ListChecks, Image as ImageIcon, ClipboardCheck, ExternalLink, ChevronDown, ChevronUp, Check } from "lucide-react";
+import { FileText, Plus, Trash2, Loader2, ArrowLeft, Sparkles, ListChecks, Image as ImageIcon, ClipboardCheck, ExternalLink, ChevronDown, ChevronUp, Check, Pencil, Save, X } from "lucide-react";
 import * as api from "../api";
 import type { Report } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -113,6 +113,17 @@ export default function ReportsPage() {
     mutationFn: (id: number) => api.deleteReport(id),
     onSuccess: invalidate,
   });
+
+  // #1: edit a report "folder" — rename + change its date range (day/month/year).
+  const [editId, setEditId] = useState<number | null>(null);
+  const [eTitle, setETitle] = useState("");
+  const [eFrom, setEFrom] = useState("");
+  const [eTo, setETo] = useState("");
+  const update = useMutation({
+    mutationFn: (p: { id: number; body: Partial<Report> }) => api.updateReport(p.id, p.body),
+    onSuccess: () => { invalidate(); setEditId(null); },
+  });
+  const startEdit = (r: Report) => { setEditId(r.id); setETitle(r.title || ""); setEFrom(r.period_from); setETo(r.period_to); };
 
   const addToLatest = useMutation({
     mutationFn: () => api.addToLatestReport(cid),
@@ -302,6 +313,30 @@ export default function ReportsPage() {
         ) : (
           <ul className="divide-y divide-slate-100">
             {shownReports.map((r) => (
+              editId === r.id ? (
+                <li key={r.id} className="py-3 bg-brand-50/40 -mx-2 px-2 rounded-lg">
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div className="flex-1 min-w-[160px]">
+                      <label className="block text-xs text-slate-500 mb-1">שם התיקייה (אופציונלי)</label>
+                      <input className="input py-1.5 text-sm w-full" placeholder="למשל: דוח רבעון Q1" value={eTitle} onChange={(e) => setETitle(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500 mb-1">מתאריך</label>
+                      <input type="date" className="input py-1.5 text-sm" value={eFrom} max={eTo} onChange={(e) => setEFrom(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500 mb-1">עד תאריך</label>
+                      <input type="date" className="input py-1.5 text-sm" value={eTo} min={eFrom} onChange={(e) => setETo(e.target.value)} />
+                    </div>
+                    <button className="btn-primary text-sm" onClick={() => update.mutate({ id: r.id, body: { title: eTitle.trim() || null, period_from: eFrom, period_to: eTo } })} disabled={update.isPending || !eFrom || !eTo}>
+                      {update.isPending ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} שמור
+                    </button>
+                    <button className="btn-secondary text-sm" onClick={() => setEditId(null)}><X size={15} /></button>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-2">שינוי טווח התאריכים קובע אילו פעולות שבוצעו שייכות לתיקייה הזו.</p>
+                  {update.isError && <div className="text-sm text-rose-600 mt-1">{(update.error as any)?.message}</div>}
+                </li>
+              ) : (
               <li key={r.id} className="flex items-center gap-3 py-3">
                 <FileText size={18} className="text-slate-400 shrink-0" />
                 <button
@@ -312,6 +347,13 @@ export default function ReportsPage() {
                   <span className="text-xs text-slate-400 mr-2">
                     {r.period_from} – {r.period_to}
                   </span>
+                </button>
+                <button
+                  className="text-slate-400 hover:text-brand-600 shrink-0 p-1"
+                  title="ערוך שם וטווח תאריכים"
+                  onClick={() => startEdit(r)}
+                >
+                  <Pencil size={15} />
                 </button>
                 <button
                   className="btn-secondary text-sm py-1.5"
@@ -327,6 +369,7 @@ export default function ReportsPage() {
                   <Trash2 size={16} />
                 </button>
               </li>
+              )
             ))}
           </ul>
         )}

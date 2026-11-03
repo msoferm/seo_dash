@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Routes, Route, NavLink, useParams, useLocation, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Users, Home, LogOut, Lightbulb, Settings2, ChevronDown } from "lucide-react";
+import { Users, Home, LogOut, Lightbulb, Settings2, ChevronDown, Link2 } from "lucide-react";
 import { useAuth } from "./AuthContext";
 import * as api from "./api";
 import { resolveNav, CLIENT_NAV_BY_KEY } from "./navItems";
@@ -26,6 +26,7 @@ import StructureKeywordsPage from "./pages/StructureKeywordsPage";
 import BlogPage from "./pages/BlogPage";
 import TasksPage from "./pages/TasksPage";
 import SuggestionsPage from "./pages/SuggestionsPage";
+import GlobalLinksPage from "./pages/GlobalLinksPage";
 import LoginPage from "./pages/LoginPage";
 import NotMemberPage from "./pages/NotMemberPage";
 import Spinner from "./components/Spinner";
@@ -62,6 +63,9 @@ function Sidebar() {
       </NavLink>
       <NavLink to="/suggestions" className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
         <Lightbulb size={18} /> הצעות ייעול
+      </NavLink>
+      <NavLink to="/global-links" className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
+        <Link2 size={18} /> קישורים גלובאלי
       </NavLink>
       {cid && (
         <>
@@ -140,6 +144,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Layout><ClientsPage /></Layout>} />
       <Route path="/suggestions" element={<Layout><SuggestionsPage /></Layout>} />
+      <Route path="/global-links" element={<Layout><GlobalLinksPage /></Layout>} />
       <Route path="/clients/:clientId" element={<Layout><ClientDashboard /></Layout>} />
       <Route path="/clients/:clientId/keywords" element={<Layout><KeywordsPage /></Layout>} />
       <Route path="/clients/:clientId/rankings" element={<Layout><RankingsPage /></Layout>} />

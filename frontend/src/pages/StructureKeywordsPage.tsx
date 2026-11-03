@@ -108,6 +108,8 @@ export default function StructureKeywordsPage() {
   const [view, setView] = useState<"keyword" | "page">("keyword");
   const [q, setQ] = useState("");
   const [onlyCannibal, setOnlyCannibal] = useState(false);
+  const [posMax, setPosMax] = useState("");   // #3a: show only rows ranked at/above this position
+  const [imprMin, setImprMin] = useState("");  // #3a: show only rows with at least this many impressions
   const [flash, setFlash] = useState<string | null>(null);
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -159,11 +161,15 @@ export default function StructureKeywordsPage() {
     return out;
   }, [posts, assignedUrls]);
 
-  // term -> its ranking pages (desc by impressions); page -> its ranking terms.
+  // #3a: filter the GSC rows by position (≤) and impressions (≥) before grouping. Applies to both views.
   const { byTerm, byPage } = useMemo(() => {
+    const pMax = posMax.trim() ? Number(posMax) : null;
+    const iMin = imprMin.trim() ? Number(imprMin) : null;
     const bt = new Map<string, KwPageRow[]>();
     const bp = new Map<string, KwPageRow[]>();
     for (const r of rows || []) {
+      if (pMax != null && !(r.position <= pMax)) continue;
+      if (iMin != null && !(r.impressions >= iMin)) continue;
       if (!bt.has(r.term)) bt.set(r.term, []);
       bt.get(r.term)!.push(r);
       if (!bp.has(r.page)) bp.set(r.page, []);
@@ -172,7 +178,7 @@ export default function StructureKeywordsPage() {
     for (const arr of bt.values()) arr.sort((a, b) => b.impressions - a.impressions);
     for (const arr of bp.values()) arr.sort((a, b) => b.impressions - a.impressions);
     return { byTerm: bt, byPage: bp };
-  }, [rows]);
+  }, [rows, posMax, imprMin]);
 
   // Keyword rows = union of GSC terms and keywords that have a written page (so new pages always show).
   const termEntries = useMemo(() => {
@@ -274,6 +280,15 @@ export default function StructureKeywordsPage() {
                     <input type="checkbox" className="h-4 w-4 accent-brand-600" checked={onlyCannibal} onChange={(e) => setOnlyCannibal(e.target.checked)} /> רק קניבליזציה
                   </label>
                 )}
+                <label className="text-xs text-slate-500 inline-flex items-center gap-1" title="הצג רק תוצאות במיקום הזה או טוב ממנו">
+                  מיקום עד
+                  <input type="number" min={1} className="input py-1 text-sm w-16" placeholder="∞" value={posMax} onChange={(e) => setPosMax(e.target.value)} />
+                </label>
+                <label className="text-xs text-slate-500 inline-flex items-center gap-1" title="הצג רק תוצאות עם לפחות כך וכך חשיפות">
+                  חשיפות מ-
+                  <input type="number" min={0} className="input py-1 text-sm w-20" placeholder="0" value={imprMin} onChange={(e) => setImprMin(e.target.value)} />
+                </label>
+                {(posMax || imprMin) && <button className="text-xs text-slate-400 hover:text-rose-600" onClick={() => { setPosMax(""); setImprMin(""); }}>נקה</button>}
                 <div className="relative">
                   <Search size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input className="input py-1 text-sm pr-7 w-52" placeholder="חפש ביטוי/עמוד" value={q} onChange={(e) => setQ(e.target.value)} />
