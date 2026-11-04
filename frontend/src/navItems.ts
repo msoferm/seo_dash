@@ -1,6 +1,6 @@
 import {
   BarChart3, Search, Target, HelpCircle, MessageSquare, ClipboardList, FileText, Sparkles,
-  LayoutList, Activity, ClipboardCheck, Upload, Wand2, Radar, Stethoscope, Newspaper, Network, Layers, Brain,
+  LayoutList, Activity, ClipboardCheck, Upload, Wand2, Radar, Stethoscope, Newspaper, Network, Layers, Brain, FileSearch,
 } from "lucide-react";
 
 export interface NavItemDef { key: string; label: string; suffix: string; icon: any }
@@ -17,6 +17,7 @@ export const CLIENT_NAV: NavItemDef[] = [
   { key: "structure", label: "ביטויי יעד ועמודי יעד", suffix: "/structure", icon: Network },
   { key: "target-pages", label: "עמודי יעד וביטויי משנה", suffix: "/target-pages", icon: Layers },
   { key: "user-intent", label: "כוונת המשתמש", suffix: "/user-intent", icon: Brain },
+  { key: "keywords-no-page", label: "מילים ללא עמוד", suffix: "/keywords-no-page", icon: FileSearch },
   { key: "engine", label: "מנוע המלצות", suffix: "/engine", icon: Sparkles },
   { key: "pages", label: "עמודים", suffix: "/pages", icon: LayoutList },
   { key: "impact", label: "מעקב השפעה", suffix: "/impact", icon: Activity },

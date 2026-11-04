@@ -1742,3 +1742,52 @@ export async function generateReportNarrative(
     current_recommendations: opts?.current_recommendations,
   });
 }
+
+// ===== "מילים ללא עמוד" — keywords without a dedicated page =====
+export interface KwNoPagePageHit { url: string; name: string; position: number | null; source: string; metric: string }
+export type KwMatch = "no_page" | "to_improve" | "needs_check";
+export interface KwNoPageRow {
+  keyword: string;
+  key: string;
+  impressions: number | null;
+  impr_by_source: Record<string, number>;
+  sources: string[];
+  pages: KwNoPagePageHit[];
+  pages_missing: boolean;
+  match: KwMatch;
+  detail: { page?: string; name?: string; title?: string | null; meta?: string | null; h1?: string | null; reason: string } | null;
+  written: boolean;
+  written_url: string | null;
+}
+export interface KwNoPageSummary { files: number; file_rows: number; keywords: number; pages_data_available: boolean; sources: string[] }
+export async function getKeywordsNoPage(clientId: number): Promise<{ rows: KwNoPageRow[]; summary: KwNoPageSummary }> {
+  return await invokeFn("keywords-no-page", { client_id: clientId, action: "data" });
+}
+
+export interface KwNoPageRec {
+  keywords: string[];
+  action: "new_page" | "improve_page" | "combine" | "needs_check";
+  title: string;
+  explanation: string;
+  target_page: string | null;
+  content_direction: string;
+  priority: "high" | "medium" | "low";
+  priority_reason: string;
+  uncertainty: string | null;
+}
+export async function analyzeKeywordsNoPage(clientId: number, rows: KwNoPageRow[]): Promise<{ recommendations: KwNoPageRec[]; analyzed: number }> {
+  return await invokeFn("keywords-no-page", { client_id: clientId, action: "analyze", rows });
+}
+
+/** Set / clear the manual "נכתב" mark for a keyword (optionally recording the written page). */
+export async function setKwWritten(clientId: number, keyword: string, writtenUrl: string | null): Promise<void> {
+  const { error } = await supabase.from("kw_written").upsert(
+    { client_id: clientId, keyword, written_url: writtenUrl },
+    { onConflict: "client_id,keyword" },
+  );
+  if (error) throw error;
+}
+export async function clearKwWritten(clientId: number, keyword: string): Promise<void> {
+  const { error } = await supabase.from("kw_written").delete().eq("client_id", clientId).eq("keyword", keyword);
+  if (error) throw error;
+}

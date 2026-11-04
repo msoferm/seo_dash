@@ -25,6 +25,7 @@ import SeoToolsPage from "./pages/SeoToolsPage";
 import StructureKeywordsPage from "./pages/StructureKeywordsPage";
 import TargetPagesPage from "./pages/TargetPagesPage";
 import UserIntentPage from "./pages/UserIntentPage";
+import KeywordsNoPagePage from "./pages/KeywordsNoPagePage";
 import BlogPage from "./pages/BlogPage";
 import TasksPage from "./pages/TasksPage";
 import SuggestionsPage from "./pages/SuggestionsPage";
@@ -158,6 +159,7 @@ export default function App() {
       <Route path="/clients/:clientId/structure" element={<Layout><StructureKeywordsPage /></Layout>} />
       <Route path="/clients/:clientId/target-pages" element={<Layout><TargetPagesPage /></Layout>} />
       <Route path="/clients/:clientId/user-intent" element={<Layout><UserIntentPage /></Layout>} />
+      <Route path="/clients/:clientId/keywords-no-page" element={<Layout><KeywordsNoPagePage /></Layout>} />
       <Route path="/clients/:clientId/engine" element={<Layout><RecEnginePage /></Layout>} />
       <Route path="/clients/:clientId/pages" element={<Layout><PagesMasterPage /></Layout>} />
       <Route path="/clients/:clientId/impact" element={<Layout><ImpactPage /></Layout>} />
