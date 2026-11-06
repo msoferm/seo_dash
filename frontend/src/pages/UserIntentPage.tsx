@@ -7,6 +7,7 @@ import type { KwPageRow, KeywordTarget, PageKeyword, PageIntent } from "../api";
 import PageHeader from "../components/PageHeader";
 import DataSourceBanner from "../components/DataSourceBanner";
 import Spinner from "../components/Spinner";
+import { useFocusTarget } from "../components/useFocusTarget";
 
 function fmt(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -237,6 +238,9 @@ export default function UserIntentPage() {
     return list.sort((a, b) => ((b.primary.length + b.secondary.length) - (a.primary.length + a.secondary.length)) || (b.totalImpr - a.totalImpr) * dir);
   }, [crawled, byPage, targetKwByPage, secondaryByPage, crawledMap, savedByPage, targets, pageKws, onlyDefined, q, sortDesc]);
 
+  // Deep link from the work plan (?focus=<page_url>).
+  useFocusTarget(!isLoading && saved !== undefined, () => setQ(""));
+
   return (
     <div>
       <PageHeader title="כוונת המשתמש" subtitle={client ? `${client.name} · ניתוח כוונת החיפוש לכל עמוד` : "כוונת המשתמש"} />
@@ -269,7 +273,7 @@ export default function UserIntentPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {pages.map((p) => <IntentCard key={p.page} cid={cid} data={p} onSaved={onSaved} />)}
+          {pages.map((p) => <div key={p.page} data-focus={p.saved?.page_url ?? p.page}><IntentCard cid={cid} data={p} onSaved={onSaved} /></div>)}
         </div>
       )}
     </div>

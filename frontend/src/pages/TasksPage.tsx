@@ -9,6 +9,7 @@ import {
 import * as api from "../api";
 import type { Task, Level, RecStatus } from "../api";
 import PageHeader from "../components/PageHeader";
+import Linkify from "../components/Linkify";
 import Spinner from "../components/Spinner";
 import TaskAssistant, { AssistantFab } from "./TaskAssistant";
 import type { AssistantSeed } from "./TaskAssistant";
@@ -29,10 +30,12 @@ const PRI_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 type Action = "execute" | "done" | "ignore" | "reopen";
 
 function deepLink(cid: number, t: Task): { href: string; label: string } | null {
-  if (t.source_type === "recommendation") return { href: `/clients/${cid}/engine`, label: "מנוע המלצות" };
-  if (t.source_type === "keyword_target") return { href: `/clients/${cid}/structure`, label: "ביטויי יעד ועמודי יעד" };
-  if (t.source_type === "page_intent") return { href: `/clients/${cid}/user-intent`, label: "כוונת המשתמש" };
-  if (t.source_type === "audit") return { href: `/clients/${cid}/seo-tools`, label: "כלי SEO" };
+  // ?focus=<source_ref> → the tab scrolls to and highlights the exact item (useFocusTarget).
+  const f = t.source_ref ? `?focus=${encodeURIComponent(t.source_ref)}` : "";
+  if (t.source_type === "recommendation") return { href: `/clients/${cid}/engine${f}`, label: "מנוע המלצות" };
+  if (t.source_type === "keyword_target") return { href: `/clients/${cid}/structure${f}`, label: "ביטויי יעד ועמודי יעד" };
+  if (t.source_type === "page_intent") return { href: `/clients/${cid}/user-intent${f}`, label: "כוונת המשתמש" };
+  if (t.source_type === "audit") return { href: `/clients/${cid}/seo-tools${f}`, label: "כלי SEO" };
   if (t.source_ref === "forums" || t.source_ref === "prospects") return { href: `/clients/${cid}/prospects`, label: "איתור קישורים" };
   if (t.source_ref === "faq") return { href: `/clients/${cid}/pages`, label: "עמודים / FAQ" };
   return null;
@@ -70,7 +73,7 @@ function SubtaskRow({ t, cid, onAction, onPreview, onAsk, busy, previewing, exec
         </div>
         <div className="flex-1 min-w-0">
           <div className={`font-medium ${done ? "text-slate-500" : ignored ? "line-through text-slate-400" : "text-slate-900"}`}>{t.title}</div>
-          {t.details && <div className="text-xs text-slate-500 mt-0.5">{t.details}</div>}
+          {t.details && <div className="text-xs text-slate-500 mt-0.5"><Linkify text={t.details} /></div>}
 
           <div className="flex flex-wrap gap-1.5 mt-1.5 items-center">
             {pillar && <span className="badge bg-slate-100 text-slate-600 inline-flex items-center gap-1"><pillar.icon size={11} /> {pillar.label}</span>}
@@ -92,7 +95,7 @@ function SubtaskRow({ t, cid, onAction, onPreview, onAsk, busy, previewing, exec
               <button className="text-xs font-medium text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1" onClick={() => setOpenPreview((o) => !o)}>
                 {openPreview ? <ChevronUp size={13} /> : <ChevronDown size={13} />} {t.writes_text ? "טיוטה לבדיקה" : "פירוט ביצוע"}
               </button>
-              {openPreview && <div className="mt-1 text-sm text-slate-700 whitespace-pre-wrap bg-indigo-50/50 border border-indigo-100 rounded-lg p-3">{t.preview}</div>}
+              {openPreview && <div className="mt-1 text-sm text-slate-700 whitespace-pre-wrap bg-indigo-50/50 border border-indigo-100 rounded-lg p-3"><Linkify text={t.preview} /></div>}
             </div>
           )}
 
@@ -101,7 +104,7 @@ function SubtaskRow({ t, cid, onAction, onPreview, onAsk, busy, previewing, exec
               <button className="text-xs text-slate-500 hover:text-slate-700 inline-flex items-center gap-1" onClick={() => setOpenNote((o) => !o)}>
                 {openNote ? <ChevronUp size={13} /> : <ChevronDown size={13} />} {isClaude ? "תוצאת הביצוע / הערה" : "הנחיה / הערה"}
               </button>
-              {openNote && <div className="mt-1 text-sm text-slate-700 whitespace-pre-wrap bg-slate-50 rounded-lg p-3">{t.note}</div>}
+              {openNote && <div className="mt-1 text-sm text-slate-700 whitespace-pre-wrap bg-slate-50 rounded-lg p-3"><Linkify text={t.note} /></div>}
             </div>
           )}
           {execError && <div className="mt-1.5 text-xs text-rose-600">{execError}</div>}
@@ -378,7 +381,7 @@ export default function TasksPage() {
                     <input type="checkbox" checked={t.status === "done"} onChange={(e) => toggle.mutate({ id: t.id, done: e.target.checked })} className="mt-1 h-4 w-4 shrink-0 accent-brand-600 cursor-pointer" />
                     <div className="flex-1 min-w-0">
                       <div className={`font-medium ${t.status === "done" ? "line-through text-slate-400" : "text-slate-900"}`}>{t.title}</div>
-                      {t.details && <div className="text-xs text-slate-500 mt-0.5">{t.details}</div>}
+                      {t.details && <div className="text-xs text-slate-500 mt-0.5"><Linkify text={t.details} /></div>}
                     </div>
                     <button className="text-slate-400 hover:text-rose-600 p-1 shrink-0" title="מחק" onClick={() => remove.mutate(t.id)}><Trash2 size={16} /></button>
                   </li>

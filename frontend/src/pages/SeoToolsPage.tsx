@@ -6,6 +6,7 @@ import * as api from "../api";
 import type { AuditIssueRow, AuditSeverity, EeatResult } from "../api";
 import PageHeader from "../components/PageHeader";
 import DataSourceBanner from "../components/DataSourceBanner";
+import { useFocusTarget } from "../components/useFocusTarget";
 import TaskAssistant, { AssistantFab } from "./TaskAssistant";
 import type { AssistantSeed } from "./TaskAssistant";
 
@@ -75,6 +76,8 @@ export default function SeoToolsPage() {
   })();
   // #10a: filter the grouped list to a single site page when one is chosen.
   const visibleGroups = pageFilter === "all" ? pageGroups : pageGroups.filter(([page]) => page === pageFilter);
+  // Deep link from the work plan (?focus=<audit issue id>).
+  useFocusTarget((issues || []).length > 0, () => setPageFilter("all"));
 
   return (
     <div>
@@ -126,7 +129,7 @@ export default function SeoToolsPage() {
                     {items.map((i: AuditIssueRow) => {
                       const applying = apply.isPending && apply.variables?.id === i.id;
                       return (
-                        <li key={i.id} className={`p-3 flex items-start gap-3 ${i.status !== "pending" ? "bg-slate-50/40" : ""}`}>
+                        <li key={i.id} data-focus={String(i.id)} className={`p-3 flex items-start gap-3 ${i.status !== "pending" ? "bg-slate-50/40" : ""}`}>
                           <div className="pt-0.5 shrink-0" title={i.status === "applied" ? "בוצע" : i.status === "rejected" ? "נדחה" : "ממתין"}>
                             {i.status === "applied" ? <CheckCircle2 size={18} className="text-emerald-500" />
                               : i.status === "rejected" ? <X size={18} className="text-slate-300" />

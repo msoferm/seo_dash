@@ -9,6 +9,7 @@ import Spinner from "../components/Spinner";
 import TaskAssistant, { AssistantFab } from "./TaskAssistant";
 import type { AssistantSeed } from "./TaskAssistant";
 import DataSourceBanner from "../components/DataSourceBanner";
+import { useFocusTarget } from "../components/useFocusTarget";
 
 const TYPE_LABEL: Record<RecType, string> = {
   title_meta: "כותרת/תיאור", improve_page: "שיפור עמוד", add_keywords: "מילות מפתח", new_content: "תוכן חדש",
@@ -147,15 +148,20 @@ export default function RecEnginePage() {
   const types = [...new Set(all.map((r) => r.type))];
   const typeCount = (tp: RecType) => byStatus.filter((r) => r.type === tp).length;
 
+  // Deep link from the work plan (?focus=<rec id>): show all statuses/types so the card renders.
+  useFocusTarget(!isLoading && all.length > 0, () => { setFilter("all"); setTypeFilter("all"); setGroupByPage(false); });
+
   const renderCard = (r: Recommendation) => (
-    <RecCard key={r.id} r={r}
-      onExample={(id) => example.mutate(id)}
-      onApply={(id, mod) => apply.mutate({ id, mod })}
-      onIgnore={(id) => ignore.mutate(id)}
-      onDone={(id) => done.mutate(id)}
-      onAsk={onAsk}
-      busy={{ example: example.isPending && example.variables === r.id, apply: apply.isPending && apply.variables?.id === r.id }}
-    />
+    <div key={r.id} data-focus={String(r.id)}>
+      <RecCard r={r}
+        onExample={(id) => example.mutate(id)}
+        onApply={(id, mod) => apply.mutate({ id, mod })}
+        onIgnore={(id) => ignore.mutate(id)}
+        onDone={(id) => done.mutate(id)}
+        onAsk={onAsk}
+        busy={{ example: example.isPending && example.variables === r.id, apply: apply.isPending && apply.variables?.id === r.id }}
+      />
+    </div>
   );
 
   return (

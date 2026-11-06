@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Network, Search, ExternalLink, AlertTriangle, Check, X, Loader2, Save, Target, FileText, Sparkles, StickyNote, ChevronDown, ChevronUp, FolderCheck } from "lucide-react";
+import { Network, Search, ExternalLink, AlertTriangle, Check, X, Loader2, Save, Target, FileText, Sparkles, StickyNote, ChevronDown, ChevronUp, FolderCheck, Undo2, Layers3 } from "lucide-react";
+import { useFocusTarget } from "../components/useFocusTarget";
 import * as api from "../api";
 import type { KwPageRow, KeywordTarget } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -25,6 +26,33 @@ function matchScore(term: string, url: string): number {
 function isFullMatch(term: string, url: string): boolean {
   const toks = term.split(/\s+/).map((t) => t.trim()).filter((t) => t.length >= 2);
   return toks.length > 0 && matchScore(term, url) === toks.length;
+}
+
+// --- Similar-keyword filter: light Hebrew stemming so "זיווד לרכבים מסחריים" also finds
+// "זיווד רכב מסחרי", "זיווד לרכב" etc. (prefix letter + plural/adjective suffixes stripped).
+const SIM_STOP = new Set(["של", "עם", "על", "את", "או", "גם", "the", "and", "for"]);
+function stem(t: string): string {
+  let s = t;
+  if (s.length > 3 && "והבלמשכ".includes(s[0])) s = s.slice(1);
+  for (const suf of ["יים", "ים", "ות", "ית", "י", "ה"]) {
+    if (s.length - suf.length >= 2 && s.endsWith(suf)) { s = s.slice(0, -suf.length); break; }
+  }
+  return s;
+}
+function simTokens(s: string): string[] {
+  return s.replace(/[֑-ׇ]/g, "").toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter((t) => t.length >= 2 && !SIM_STOP.has(t));
+}
+function tokMatch(a: string, b: string): boolean {
+  if (a === b) return true;
+  const sa = stem(a), sb = stem(b);
+  if (sa === sb) return true;
+  return sa.length >= 3 && sb.length >= 3 && (sa.startsWith(sb) || sb.startsWith(sa));
+}
+/** Share of the query's words that appear (stemmed) in the term: 0..1. */
+function similarity(query: string, term: string): number {
+  const qt = simTokens(query); if (!qt.length) return 0;
+  const tt = simTokens(term);
+  return qt.filter((q) => tt.some((t) => tokMatch(q, t))).length / qt.length;
 }
 
 /** #4: a team note on a keyword ("needs a new page" / "needs content improvement" / free text).
@@ -110,6 +138,7 @@ export default function StructureKeywordsPage() {
   const [definedOpen, setDefinedOpen] = useState(false); // #1b: the "defined pages" folder
   const [posMax, setPosMax] = useState("");   // #3a: show only rows ranked at/above this position
   const [imprMin, setImprMin] = useState("");  // #3a: show only rows with at least this many impressions
+  const [simQ, setSimQ] = useState("");        // general filter: keywords similar to this text
   const [flash, setFlash] = useState<string | null>(null);
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -183,8 +212,13 @@ export default function StructureKeywordsPage() {
     let list = [...terms].map((term) => ({ term, pgs: byTerm.get(term) || [], written: writtenByTerm.get(term) || [] }));
     if (onlyCannibal) list = list.filter((e) => e.pgs.length >= 2);
     if (q.trim()) { const s = q.trim().toLowerCase(); list = list.filter((e) => e.term.toLowerCase().includes(s)); }
-    return list.sort((a, b) => b.pgs.reduce((s, r) => s + r.impressions, 0) - a.pgs.reduce((s, r) => s + r.impressions, 0));
-  }, [byTerm, writtenByTerm, onlyCannibal, q]);
+    const impr = (e: { pgs: KwPageRow[] }) => e.pgs.reduce((s, r) => s + r.impressions, 0);
+    if (simQ.trim()) {
+      const scored = list.map((e) => ({ e, sc: similarity(simQ, e.term) })).filter((x) => x.sc >= 0.5);
+      return scored.sort((a, b) => b.sc - a.sc || impr(b.e) - impr(a.e)).map((x) => x.e);
+    }
+    return list.sort((a, b) => impr(b) - impr(a));
+  }, [byTerm, writtenByTerm, onlyCannibal, q, simQ]);
 
   const cannibalCount = [...byTerm.values()].filter((p) => p.length >= 2).length;
 
@@ -193,6 +227,20 @@ export default function StructureKeywordsPage() {
   const pendingEntries = termEntries.filter((e) => !isDefined(e.term));
   const definedEntries = termEntries.filter((e) => isDefined(e.term));
   const definedCount = (targets || []).filter((t) => t.page_url || t.intent === "new_page").length;
+
+  // 1a: return a defined keyword to the pending list. Keeps a team note if there is one
+  // (= the state before a page was chosen); otherwise removes the target row entirely.
+  const undefine = useMutation({
+    mutationFn: (t: KeywordTarget) => t.notes
+      ? api.upsertKeywordTarget(cid, { keyword: t.keyword, page_url: null, intent: "strengthen", notes: t.notes })
+      : api.deleteKeywordTarget(t.id),
+    onSuccess: invalidateTargets,
+  });
+
+  // Deep link from the work plan (?focus=<keyword>): clear filters + open the defined folder.
+  useFocusTarget(!isLoading && targets !== undefined, () => {
+    setQ(""); setSimQ(""); setOnlyCannibal(false); setPosMax(""); setImprMin(""); setDefinedOpen(true);
+  });
 
   const jumpTo = (term: string) => {
     setQ(""); setOnlyCannibal(false); setDefinedOpen(true);
@@ -219,7 +267,7 @@ export default function StructureKeywordsPage() {
     const newUrlSet = new Set(items.filter((i) => i.isNew).map((i) => norm(i.url)));
     const flashing = flash === term;
     return (
-      <div key={term} ref={(el) => { rowRefs.current[term] = el; }} className={`border rounded-lg p-3 transition-colors ${flashing ? "border-brand-400 bg-brand-50/60 ring-2 ring-brand-200" : "border-slate-200"}`}>
+      <div key={term} data-focus={term} ref={(el) => { rowRefs.current[term] = el; }} className={`border rounded-lg p-3 transition-colors ${flashing ? "border-brand-400 bg-brand-50/60 ring-2 ring-brand-200" : "border-slate-200"}`}>
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="font-medium text-slate-900 flex items-center gap-2">
             {term}
@@ -255,6 +303,12 @@ export default function StructureKeywordsPage() {
             <Check size={12} /> יעד מוגדר: {saved.intent === "new_page" ? `עמוד חדש${saved.page_url ? ` (${decodePath(saved.page_url)})` : ""}` : decodePath(saved.page_url || "")}
             <button className="text-emerald-600 hover:text-rose-600 mr-1" title="הסר יעד" onClick={() => delTarget.mutate(saved.id)}><X size={12} /></button>
           </div>
+        )}
+        {saved && isDefined(term) && (
+          <button className="mt-2 mr-2 text-xs inline-flex items-center gap-1 text-slate-500 hover:text-brand-600 border border-slate-200 rounded px-2 py-1"
+            title="בטל את הגדרת עמוד היעד והחזר את הביטוי לרשימה למעלה" onClick={() => undefine.mutate(saved)} disabled={undefine.isPending}>
+            <Undo2 size={12} /> בטל והחזר לרשימה
+          </button>
         )}
         {saved?.notes && (
           <div className="mt-2 text-xs inline-flex items-start gap-1 bg-amber-50 text-amber-800 rounded px-2 py-1"><StickyNote size={12} className="mt-0.5 shrink-0" /> {saved.notes}</div>
@@ -326,6 +380,19 @@ export default function StructureKeywordsPage() {
             <Tile label="ביטויים בקניבליזציה" value={cannibalCount} alert={cannibalCount > 0} />
           </div>
 
+          {/* 1b: general filter — keywords textually close/similar to a phrase (both lists) */}
+          <div className="card mb-4 flex flex-wrap items-center gap-2">
+            <Layers3 size={16} className="text-brand-600 shrink-0" />
+            <span className="text-sm font-medium text-slate-700">סינון לפי ביטויים דומים:</span>
+            <input className="input py-1 text-sm flex-1 min-w-[220px]" placeholder='למשל: זיווד לרכבים מסחריים' value={simQ} onChange={(e) => setSimQ(e.target.value)} />
+            {simQ && (
+              <>
+                <span className="text-xs text-slate-500">{termEntries.length} ביטויים דומים ({pendingEntries.length} ממתינים · {definedEntries.length} הוגדרו)</span>
+                <button className="text-xs text-slate-400 hover:text-rose-600" onClick={() => setSimQ("")}>נקה</button>
+              </>
+            )}
+          </div>
+
           <div className="card">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <h3 className="font-semibold text-slate-800 text-sm">ביטויים שממתינים להגדרת עמוד יעד</h3>
@@ -362,7 +429,7 @@ export default function StructureKeywordsPage() {
                 <h3 className="font-semibold flex items-center gap-2 text-slate-800"><FolderCheck size={18} className="text-emerald-600" /> הוגדר עמוד <span className="text-xs font-normal text-slate-400">({definedEntries.length})</span></h3>
                 {definedOpen ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
               </button>
-              {definedOpen && <div className="space-y-3 mt-3">{definedEntries.map((e) => renderCard(e))}</div>}
+              {(definedOpen || !!simQ.trim()) && <div className="space-y-3 mt-3">{definedEntries.map((e) => renderCard(e))}</div>}
             </div>
           )}
         </>

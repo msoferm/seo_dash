@@ -15,6 +15,11 @@ function decodePath(u: string): string {
   try { return decodeURIComponent(u.replace(/^https?:\/\/[^/]+/, "")) || u; } catch { return u; }
 }
 const norm = (u: string) => (u || "").replace(/\/+$/, "").toLowerCase();
+/** How many of the keyword's words appear in the page's Hebrew name (title or decoded path). */
+function nameMatch(term: string, url: string, title?: string): number {
+  const hay = `${title || ""} ${decodePath(url)}`.toLowerCase();
+  return term.toLowerCase().split(/\s+/).filter((t) => t.length >= 2 && hay.includes(t)).length;
+}
 
 type SortMetric = "impr" | "clicks" | "pos";
 
@@ -69,6 +74,13 @@ export default function TargetPagesPage() {
     for (const r of rows || []) { if (!m.has(r.term)) m.set(r.term, new Set()); m.get(r.term)!.add(norm(r.page)); }
     return m;
   }, [rows]);
+  // #5: every page a term appears on in Google (unfiltered), for the per-keyword drill-down.
+  const pagesByTerm = useMemo(() => {
+    const m = new Map<string, KwPageRow[]>();
+    for (const r of rows || []) { if (!m.has(r.term)) m.set(r.term, []); m.get(r.term)!.push(r); }
+    return m;
+  }, [rows]);
+  const [openKw, setOpenKw] = useState<Record<string, boolean>>({});
 
   const targetKwByPage = useMemo(() => {
     const m = new Map<string, KeywordTarget[]>();
@@ -201,7 +213,7 @@ export default function TargetPagesPage() {
               const totalImpr = gsc.reduce((s, r) => s + r.impressions, 0);
               const totalClicks = gsc.reduce((s, r) => s + r.clicks, 0);
               const title = titleByPage.get(nk);
-              const isOpen = open[nk] ?? true;
+              const isOpen = open[nk] ?? false; // #4: every page starts collapsed
               const metaRow = (term: string) => gscByTerm.get(term);
               return (
                 <div key={page} className="card">
@@ -247,12 +259,19 @@ export default function TargetPagesPage() {
                         <ul className="mt-3 divide-y divide-slate-100 border-t border-slate-100 pt-1">
                           {otherRows.map((r) => {
                             const elsewhere = (termPageCount.get(r.term)?.size || 0) > 1;
+                            const kwKey = `${nk}|${r.term}`;
+                            const kwOpen = !!openKw[kwKey];
+                            // Pages this keyword appears on, best first: most impressions, then page-name match.
+                            const termPages = kwOpen ? [...(pagesByTerm.get(r.term) || [])].sort((a, b) =>
+                              b.impressions - a.impressions || nameMatch(r.term, b.page, titleByPage.get(norm(b.page))) - nameMatch(r.term, a.page, titleByPage.get(norm(a.page)))) : [];
                             return (
-                              <li key={r.term} className="py-1.5 flex items-center justify-between gap-2 flex-wrap">
-                                <span className="text-sm text-slate-700 inline-flex items-center gap-1.5 min-w-0">
+                              <li key={r.term} className="py-1.5">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <button className="text-sm text-slate-700 inline-flex items-center gap-1.5 min-w-0 text-right hover:text-brand-700" onClick={() => setOpenKw((o) => ({ ...o, [kwKey]: !kwOpen }))} title="הצג באילו עמודים הביטוי מופיע בגוגל">
+                                  {kwOpen ? <ChevronUp size={14} className="text-slate-400 shrink-0" /> : <ChevronDown size={14} className="text-slate-400 shrink-0" />}
                                   <span className="truncate">{r.term}</span>
                                   {elsewhere && <span className="badge bg-amber-50 text-amber-600">גם בעמודים אחרים</span>}
-                                </span>
+                                </button>
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="text-xs text-slate-400 shrink-0">מ' {r.position} · {r.impressions.toLocaleString()} ח' · {r.clicks.toLocaleString()} ק'</span>
                                   <button className="btn-secondary text-xs py-0.5 px-2 border-blue-200 text-blue-700" onClick={() => addSecondary.mutate({ page, kw: r.term })} title="הוסף כביטוי משנה לעמוד זה"><Plus size={12} /> ביטוי משנה</button>
@@ -263,6 +282,28 @@ export default function TargetPagesPage() {
                                   </select>
                                   <button className="text-slate-400 hover:text-slate-700 text-xs inline-flex items-center gap-0.5" onClick={() => park.mutate(r.term)} title="שים בצד"><PauseCircle size={13} /> בצד</button>
                                 </div>
+                              </div>
+                              {kwOpen && (
+                                <div className="mt-1.5 mr-5 bg-slate-50 border border-slate-200 rounded-lg p-2">
+                                  <div className="text-[11px] text-slate-500 mb-1">עמודים שבהם "{r.term}" מופיע בתוצאות החיפוש ({termPages.length}):</div>
+                                  <ul className="space-y-1">
+                                    {termPages.map((tp, i) => {
+                                      const isCur = norm(tp.page) === nk;
+                                      const name = titleByPage.get(norm(tp.page)) || decodePath(tp.page);
+                                      return (
+                                        <li key={tp.page} className={`flex items-center justify-between gap-2 text-xs rounded px-1.5 py-1 ${i === 0 ? "bg-emerald-50" : ""}`}>
+                                          <a href={tp.page} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline inline-flex items-center gap-1 min-w-0" title={decodePath(tp.page)}>
+                                            <ExternalLink size={10} className="shrink-0" /><span className="truncate">{name}</span>
+                                            {i === 0 && <span className="badge bg-emerald-100 text-emerald-700 shrink-0">התאמה מיטבית</span>}
+                                            {isCur && <span className="badge bg-slate-200 text-slate-600 shrink-0">העמוד הנוכחי</span>}
+                                          </a>
+                                          <span className="text-slate-400 shrink-0">מיקום {tp.position} · {tp.impressions.toLocaleString()} ח' · {tp.clicks.toLocaleString()} ק'</span>
+                                        </li>
+                                      );
+                                    })}
+                                  </ul>
+                                </div>
+                              )}
                               </li>
                             );
                           })}

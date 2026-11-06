@@ -72,3 +72,12 @@ button {
     break-inside: avoid;
   }
 }
+
+/* Deep-link target highlight (useFocusTarget) */
+.focus-flash {
+  outline: 3px solid #60a5fa;
+  outline-offset: 2px;
+  background-color: #eff6ff !important;
+  transition: background-color 0.3s;
+  border-radius: 0.5rem;
+}
