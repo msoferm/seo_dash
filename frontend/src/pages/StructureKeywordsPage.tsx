@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Network, Search, ExternalLink, AlertTriangle, Check, X, Loader2, Save, Target, FileText, Sparkles, StickyNote, ChevronDown, ChevronUp, FolderCheck, Undo2, Layers3 } from "lucide-react";
+import { Network, Search, ExternalLink, AlertTriangle, Check, X, Loader2, Save, Target, FileText, Sparkles, StickyNote, ChevronDown, ChevronUp, FolderCheck, Undo2, Layers3, Filter } from "lucide-react";
 import { useFocusTarget } from "../components/useFocusTarget";
 import * as api from "../api";
 import type { KwPageRow, KeywordTarget } from "../api";
@@ -139,6 +139,8 @@ export default function StructureKeywordsPage() {
   const [posMax, setPosMax] = useState("");   // #3a: show only rows ranked at/above this position
   const [imprMin, setImprMin] = useState("");  // #3a: show only rows with at least this many impressions
   const [simQ, setSimQ] = useState("");        // general filter: keywords similar to this text
+  const [urlFilter, setUrlFilter] = useState(""); // general filter: keywords that share this ranking URL (normalized)
+  const [filterMode, setFilterMode] = useState<"kw" | "url" | "both">("kw");
   const [flash, setFlash] = useState<string | null>(null);
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -213,12 +215,31 @@ export default function StructureKeywordsPage() {
     if (onlyCannibal) list = list.filter((e) => e.pgs.length >= 2);
     if (q.trim()) { const s = q.trim().toLowerCase(); list = list.filter((e) => e.term.toLowerCase().includes(s)); }
     const impr = (e: { pgs: KwPageRow[] }) => e.pgs.reduce((s, r) => s + r.impressions, 0);
-    if (simQ.trim()) {
+    // Shared-URL filter: only keywords for which this URL also ranks in Google.
+    if (filterMode !== "kw" && urlFilter) list = list.filter((e) => e.pgs.some((r) => norm(r.page) === urlFilter));
+    if (filterMode !== "url" && simQ.trim()) {
       const scored = list.map((e) => ({ e, sc: similarity(simQ, e.term) })).filter((x) => x.sc >= 0.5);
       return scored.sort((a, b) => b.sc - a.sc || impr(b.e) - impr(a.e)).map((x) => x.e);
     }
     return list.sort((a, b) => impr(b) - impr(a));
-  }, [byTerm, writtenByTerm, onlyCannibal, q, simQ]);
+  }, [byTerm, writtenByTerm, onlyCannibal, q, simQ, urlFilter, filterMode]);
+
+  // Ranking URLs for the shared-URL filter, most keywords first.
+  const { data: crawled } = useQuery({ queryKey: ["crawled-pages", cid], queryFn: () => api.listCrawledPages(cid), enabled: !!cid });
+  const urlOptions = useMemo(() => {
+    const titles = new Map<string, string>();
+    for (const c of crawled || []) if (c.title) titles.set(norm(c.url), c.title);
+    const m = new Map<string, { url: string; count: number }>();
+    for (const arr of byTerm.values()) for (const r of arr) {
+      const k = norm(r.page); const cur = m.get(k);
+      if (cur) cur.count++; else m.set(k, { url: r.page, count: 1 });
+    }
+    return [...m.entries()].map(([k, v]) => ({ key: k, url: v.url, count: v.count, label: titles.get(k) || decodePath(v.url) }))
+      .sort((a, b) => b.count - a.count);
+  }, [byTerm, crawled]);
+  const filterUrl = (url: string) => { setUrlFilter(norm(url)); setFilterMode(simQ.trim() ? "both" : "url"); };
+  const kwActive = filterMode !== "url" && !!simQ.trim();
+  const urlActive = filterMode !== "kw" && !!urlFilter;
 
   const cannibalCount = [...byTerm.values()].filter((p) => p.length >= 2).length;
 
@@ -239,7 +260,7 @@ export default function StructureKeywordsPage() {
 
   // Deep link from the work plan (?focus=<keyword>): clear filters + open the defined folder.
   useFocusTarget(!isLoading && targets !== undefined, () => {
-    setQ(""); setSimQ(""); setOnlyCannibal(false); setPosMax(""); setImprMin(""); setDefinedOpen(true);
+    setQ(""); setSimQ(""); setUrlFilter(""); setOnlyCannibal(false); setPosMax(""); setImprMin(""); setDefinedOpen(true);
   });
 
   const jumpTo = (term: string) => {
@@ -290,8 +311,13 @@ export default function StructureKeywordsPage() {
                     {full && <span className="badge bg-emerald-50 text-emerald-700 shrink-0">התאמה מלאה</span>}
                     {it.isNew && <span className="badge bg-violet-100 text-violet-700 shrink-0">חדש — להגדיר כיעד</span>}
                   </a>
-                  <span className="text-xs text-slate-400 shrink-0">
+                  <span className="text-xs text-slate-400 shrink-0 inline-flex items-center gap-2">
                     {it.position != null ? <>מיקום {it.position} · {(it.impressions || 0).toLocaleString()} חשיפות</> : "טרם מדורג"}
+                    {it.position != null && (
+                      <button className={`hover:text-brand-600 inline-flex items-center gap-0.5 ${urlActive && urlFilter === norm(it.url) ? "text-brand-600" : ""}`} title="הצג את כל הביטויים שהעמוד הזה מדורג עליהם" onClick={() => filterUrl(it.url)}>
+                        <Filter size={11} /> ביטויים משותפים
+                      </button>
+                    )}
                   </span>
                 </li>
               );
@@ -380,16 +406,32 @@ export default function StructureKeywordsPage() {
             <Tile label="ביטויים בקניבליזציה" value={cannibalCount} alert={cannibalCount > 0} />
           </div>
 
-          {/* 1b: general filter — keywords textually close/similar to a phrase (both lists) */}
-          <div className="card mb-4 flex flex-wrap items-center gap-2">
-            <Layers3 size={16} className="text-brand-600 shrink-0" />
-            <span className="text-sm font-medium text-slate-700">סינון לפי ביטויים דומים:</span>
-            <input className="input py-1 text-sm flex-1 min-w-[220px]" placeholder='למשל: זיווד לרכבים מסחריים' value={simQ} onChange={(e) => setSimQ(e.target.value)} />
-            {simQ && (
-              <>
-                <span className="text-xs text-slate-500">{termEntries.length} ביטויים דומים ({pendingEntries.length} ממתינים · {definedEntries.length} הוגדרו)</span>
-                <button className="text-xs text-slate-400 hover:text-rose-600" onClick={() => setSimQ("")}>נקה</button>
-              </>
+          {/* General filter: similar keywords / shared ranking URL / both (applies to both lists) */}
+          <div className="card mb-4 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Layers3 size={16} className="text-brand-600 shrink-0" />
+              <span className="text-sm font-medium text-slate-700">סינון כללי:</span>
+              {([["kw", "לפי מילת מפתח"], ["url", "לפי עמוד משותף"], ["both", "מילת מפתח + עמוד משותף"]] as const).map(([k, label]) => (
+                <button key={k} className={`text-xs py-1 px-2.5 rounded-full border ${filterMode === k ? "bg-brand-600 text-white border-brand-600" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`} onClick={() => setFilterMode(k)}>{label}</button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {filterMode !== "url" && (
+                <input className="input py-1 text-sm flex-1 min-w-[220px]" placeholder='ביטויים דומים ל… (למשל: זיווד לרכבים מסחריים)' value={simQ} onChange={(e) => setSimQ(e.target.value)} />
+              )}
+              {filterMode !== "kw" && (
+                <select className="input py-1 text-sm flex-1 min-w-[220px] max-w-full" value={urlFilter} onChange={(e) => setUrlFilter(e.target.value)} title="הצג רק ביטויים שהעמוד הזה מדורג גם עליהם">
+                  <option value="">בחר עמוד מדורג משותף…</option>
+                  {urlOptions.map((o) => <option key={o.key} value={o.key}>{o.label} ({o.count} ביטויים)</option>)}
+                </select>
+              )}
+            </div>
+            {(kwActive || urlActive) && (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                <span>{termEntries.length} ביטויים ({pendingEntries.length} ממתינים · {definedEntries.length} הוגדרו)</span>
+                {urlActive && <a href={urlOptions.find((o) => o.key === urlFilter)?.url} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline inline-flex items-center gap-0.5"><ExternalLink size={11} /> פתח את העמוד</a>}
+                <button className="text-slate-400 hover:text-rose-600" onClick={() => { setSimQ(""); setUrlFilter(""); }}>נקה</button>
+              </div>
             )}
           </div>
 
@@ -429,7 +471,7 @@ export default function StructureKeywordsPage() {
                 <h3 className="font-semibold flex items-center gap-2 text-slate-800"><FolderCheck size={18} className="text-emerald-600" /> הוגדר עמוד <span className="text-xs font-normal text-slate-400">({definedEntries.length})</span></h3>
                 {definedOpen ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
               </button>
-              {(definedOpen || !!simQ.trim()) && <div className="space-y-3 mt-3">{definedEntries.map((e) => renderCard(e))}</div>}
+              {(definedOpen || kwActive || urlActive) &&<div className="space-y-3 mt-3">{definedEntries.map((e) => renderCard(e))}</div>}
             </div>
           )}
         </>

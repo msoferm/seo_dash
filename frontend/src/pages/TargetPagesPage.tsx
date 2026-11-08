@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Layers, Search, ExternalLink, Target, Plus, X, Loader2, ArrowUpDown, FilePlus, PauseCircle, ChevronDown, ChevronUp, FileText } from "lucide-react";
@@ -81,6 +81,37 @@ export default function TargetPagesPage() {
     return m;
   }, [rows]);
   const [openKw, setOpenKw] = useState<Record<string, boolean>>({});
+  // Any saved keyword_target by keyword — to tell "not yet a target" from "target of another page".
+  const targetByKw = useMemo(() => { const m = new Map<string, KeywordTarget>(); for (const t of targets || []) m.set(t.keyword, t); return m; }, [targets]);
+
+  /** #5 drill-down: every page the keyword appears on in Google, best first. */
+  const pagesPanel = (term: string, nk: string) => {
+    const termPages = [...(pagesByTerm.get(term) || [])].sort((a, b) =>
+      b.impressions - a.impressions || nameMatch(term, b.page, titleByPage.get(norm(b.page))) - nameMatch(term, a.page, titleByPage.get(norm(a.page))));
+    return (
+      <div className="mr-5 bg-slate-50 border border-slate-200 rounded-lg p-2">
+        <div className="text-[11px] text-slate-500 mb-1">עמודים שבהם "{term}" מופיע בתוצאות החיפוש ({termPages.length}):</div>
+        {termPages.length === 0 ? <div className="text-xs text-slate-400">אין נתוני דירוג לביטוי בטווח שנבחר.</div> : (
+          <ul className="space-y-1">
+            {termPages.map((tp, i) => {
+              const isCur = norm(tp.page) === nk;
+              const name = titleByPage.get(norm(tp.page)) || decodePath(tp.page);
+              return (
+                <li key={tp.page} className={`flex items-center justify-between gap-2 text-xs rounded px-1.5 py-1 ${i === 0 ? "bg-emerald-50" : ""}`}>
+                  <a href={tp.page} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline inline-flex items-center gap-1 min-w-0" title={decodePath(tp.page)}>
+                    <ExternalLink size={10} className="shrink-0" /><span className="truncate">{name}</span>
+                    {i === 0 && <span className="badge bg-emerald-100 text-emerald-700 shrink-0">התאמה מיטבית</span>}
+                    {isCur && <span className="badge bg-slate-200 text-slate-600 shrink-0">העמוד הנוכחי</span>}
+                  </a>
+                  <span className="text-slate-400 shrink-0">מיקום {tp.position} · {tp.impressions.toLocaleString()} ח' · {tp.clicks.toLocaleString()} ק'</span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    );
+  };
 
   const targetKwByPage = useMemo(() => {
     const m = new Map<string, KeywordTarget[]>();
@@ -229,89 +260,81 @@ export default function TargetPagesPage() {
                   </div>
 
                   {isOpen && (
-                    <>
-                      {/* Pinned: target + secondary keywords */}
-                      <div className="mt-3 flex flex-wrap gap-1.5">
-                        {targetKws.length === 0 && secondary.length === 0 && <span className="text-xs text-slate-400">לא הוגדר ביטוי יעד לעמוד זה. הגדר אותו בלשונית "ביטויי יעד ועמודי יעד".</span>}
-                        {targetKws.map((kw) => {
-                          const r = metaRow(kw); const elsewhere = (termPageCount.get(kw)?.size || 0) > 1;
-                          return (
-                            <span key={kw} className="badge bg-emerald-50 text-emerald-700 inline-flex items-center gap-1" title="ביטוי יעד">
-                              <Target size={11} /> {kw}
-                              {r && <span className="text-emerald-500/80">· מ' {r.position} · {r.impressions.toLocaleString()} ח'</span>}
-                              {elsewhere && <span className="badge bg-amber-100 text-amber-700 ml-1">גם בעמודים אחרים</span>}
-                            </span>
-                          );
-                        })}
-                        {secondary.map((s) => {
-                          const r = metaRow(s.keyword);
-                          return (
-                            <span key={s.id} className="badge bg-blue-50 text-blue-700 inline-flex items-center gap-1" title="ביטוי משנה">
-                              {s.keyword}{r && <span className="text-blue-400">· מ' {r.position} · {r.impressions.toLocaleString()} ח'</span>}
-                              <button className="text-blue-400 hover:text-rose-600" title="הסר ביטוי משנה" onClick={() => removeSecondary.mutate(s.id)}><X size={11} /></button>
-                            </span>
-                          );
-                        })}
+                    gsc.length === 0 && targetKws.length === 0 && secondary.length === 0 ? (
+                      <p className="text-xs text-slate-400 mt-3"><FileText size={12} className="inline" /> אין נתוני דירוג מ-Search Console לעמוד זה בטווח שנבחר, ולא הוגדר לו ביטוי יעד.</p>
+                    ) : (
+                      <div className="mt-3 overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-right text-xs text-slate-500 border-b border-slate-200">
+                              <th className="py-1.5 px-2 font-medium">מילת מפתח</th>
+                              <th className="py-1.5 px-2 font-medium">סטטוס</th>
+                              <th className="py-1.5 px-2 font-medium">מיקום</th>
+                              <th className="py-1.5 px-2 font-medium">חשיפות</th>
+                              <th className="py-1.5 px-2 font-medium">קליקים</th>
+                              <th className="py-1.5 px-2 font-medium">CTR</th>
+                              <th className="py-1.5 px-2 font-medium">פעולות</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[
+                              ...targetKws.map((kw) => ({ term: kw, kind: "target" as const, r: metaRow(kw), secId: 0 })),
+                              ...secondary.map((s) => ({ term: s.keyword, kind: "secondary" as const, r: metaRow(s.keyword), secId: s.id })),
+                              ...otherRows.map((r) => ({ term: r.term, kind: "other" as const, r: r as KwPageRow | undefined, secId: 0 })),
+                            ].map(({ term, kind, r, secId }) => {
+                              const elsewhere = (termPageCount.get(term)?.size || 0) > 1;
+                              const kwKey = `${nk}|${term}`;
+                              const kwOpen = !!openKw[kwKey];
+                              const otherTarget = kind === "other" ? targetByKw.get(term) : undefined;
+                              const rowCls = kind === "target" ? "bg-emerald-50" : kind === "secondary" ? "bg-blue-50/60" : "";
+                              return (
+                                <Fragment key={`${kind}|${term}`}>
+                                  <tr className={`border-b border-slate-100 ${rowCls}`}>
+                                    <td className="py-1.5 px-2">
+                                      <button className="inline-flex items-center gap-1.5 text-right text-slate-800 hover:text-brand-700" onClick={() => setOpenKw((o) => ({ ...o, [kwKey]: !kwOpen }))} title="הצג באילו עמודים הביטוי מופיע בגוגל">
+                                        {kwOpen ? <ChevronUp size={14} className="text-slate-400 shrink-0" /> : <ChevronDown size={14} className="text-slate-400 shrink-0" />}
+                                        {kind === "target" && <Target size={12} className="text-emerald-600 shrink-0" />}
+                                        <span className={kind === "target" ? "font-medium text-emerald-800" : kind === "secondary" ? "text-blue-800" : ""}>{term}</span>
+                                      </button>
+                                      {elsewhere && <span className="badge bg-amber-50 text-amber-600 mr-1">גם בעמודים אחרים</span>}
+                                    </td>
+                                    <td className="py-1.5 px-2 whitespace-nowrap text-xs">
+                                      {kind === "target" ? <span className="badge bg-emerald-100 text-emerald-700">ביטוי יעד</span>
+                                        : kind === "secondary" ? <span className="badge bg-blue-100 text-blue-700">ביטוי משנה</span>
+                                        : otherTarget && (otherTarget.page_url || otherTarget.intent === "new_page" || otherTarget.status === "parked")
+                                          ? <span className="badge bg-slate-100 text-slate-600" title={otherTarget.page_url ? decodePath(otherTarget.page_url) : ""}>{otherTarget.status === "parked" ? "בצד" : otherTarget.intent === "new_page" ? "יעד: עמוד חדש" : "יעד בעמוד אחר"}</span>
+                                          : <span className="text-slate-400">טרם הוגדר כיעד</span>}
+                                    </td>
+                                    <td className="py-1.5 px-2 whitespace-nowrap">{r ? r.position : <span className="text-slate-300">—</span>}</td>
+                                    <td className="py-1.5 px-2 whitespace-nowrap">{r ? r.impressions.toLocaleString() : <span className="text-slate-300">—</span>}</td>
+                                    <td className="py-1.5 px-2 whitespace-nowrap">{r ? r.clicks.toLocaleString() : <span className="text-slate-300">—</span>}</td>
+                                    <td className="py-1.5 px-2 whitespace-nowrap">{r ? `${(r.ctr * 100).toFixed(1)}%` : <span className="text-slate-300">—</span>}</td>
+                                    <td className="py-1.5 px-2">
+                                      {kind === "secondary" ? (
+                                        <button className="text-xs text-blue-500 hover:text-rose-600 inline-flex items-center gap-0.5" title="הסר ביטוי משנה" onClick={() => removeSecondary.mutate(secId)}><X size={12} /> הסר</button>
+                                      ) : kind === "other" ? (
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <button className="btn-secondary text-xs py-0.5 px-2 border-blue-200 text-blue-700" onClick={() => addSecondary.mutate({ page, kw: term })} title="הוסף כביטוי משנה לעמוד זה"><Plus size={12} /> ביטוי משנה</button>
+                                          <button className="btn-secondary text-xs py-0.5 px-2" onClick={() => newPage.mutate(term)} title="דורש עמוד חדש ייעודי"><FilePlus size={12} /> עמוד חדש</button>
+                                          <select className="input py-0.5 text-xs w-auto max-w-[150px]" defaultValue="" onChange={(e) => { if (e.target.value) move.mutate({ kw: term, page: e.target.value }); }} title="העבר לעמוד אחר">
+                                            <option value="">העבר לעמוד…</option>
+                                            {allPageUrls.filter((u) => norm(u) !== nk).map((u) => <option key={u} value={u}>{decodePath(u)}</option>)}
+                                          </select>
+                                          <button className="text-slate-400 hover:text-slate-700 text-xs inline-flex items-center gap-0.5" onClick={() => park.mutate(term)} title="שים בצד"><PauseCircle size={13} /> בצד</button>
+                                        </div>
+                                      ) : null}
+                                    </td>
+                                  </tr>
+                                  {kwOpen && (
+                                    <tr className="border-b border-slate-100"><td colSpan={7} className="px-2 py-1.5">{pagesPanel(term, nk)}</td></tr>
+                                  )}
+                                </Fragment>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
-
-                      {/* All ranking keywords with per-keyword actions */}
-                      {otherRows.length > 0 ? (
-                        <ul className="mt-3 divide-y divide-slate-100 border-t border-slate-100 pt-1">
-                          {otherRows.map((r) => {
-                            const elsewhere = (termPageCount.get(r.term)?.size || 0) > 1;
-                            const kwKey = `${nk}|${r.term}`;
-                            const kwOpen = !!openKw[kwKey];
-                            // Pages this keyword appears on, best first: most impressions, then page-name match.
-                            const termPages = kwOpen ? [...(pagesByTerm.get(r.term) || [])].sort((a, b) =>
-                              b.impressions - a.impressions || nameMatch(r.term, b.page, titleByPage.get(norm(b.page))) - nameMatch(r.term, a.page, titleByPage.get(norm(a.page)))) : [];
-                            return (
-                              <li key={r.term} className="py-1.5">
-                              <div className="flex items-center justify-between gap-2 flex-wrap">
-                                <button className="text-sm text-slate-700 inline-flex items-center gap-1.5 min-w-0 text-right hover:text-brand-700" onClick={() => setOpenKw((o) => ({ ...o, [kwKey]: !kwOpen }))} title="הצג באילו עמודים הביטוי מופיע בגוגל">
-                                  {kwOpen ? <ChevronUp size={14} className="text-slate-400 shrink-0" /> : <ChevronDown size={14} className="text-slate-400 shrink-0" />}
-                                  <span className="truncate">{r.term}</span>
-                                  {elsewhere && <span className="badge bg-amber-50 text-amber-600">גם בעמודים אחרים</span>}
-                                </button>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-xs text-slate-400 shrink-0">מ' {r.position} · {r.impressions.toLocaleString()} ח' · {r.clicks.toLocaleString()} ק'</span>
-                                  <button className="btn-secondary text-xs py-0.5 px-2 border-blue-200 text-blue-700" onClick={() => addSecondary.mutate({ page, kw: r.term })} title="הוסף כביטוי משנה לעמוד זה"><Plus size={12} /> ביטוי משנה</button>
-                                  <button className="btn-secondary text-xs py-0.5 px-2" onClick={() => newPage.mutate(r.term)} title="דורש עמוד חדש ייעודי"><FilePlus size={12} /> עמוד חדש</button>
-                                  <select className="input py-0.5 text-xs w-auto max-w-[150px]" defaultValue="" onChange={(e) => { if (e.target.value) move.mutate({ kw: r.term, page: e.target.value }); }} title="העבר לעמוד אחר">
-                                    <option value="">העבר לעמוד…</option>
-                                    {allPageUrls.filter((u) => norm(u) !== nk).map((u) => <option key={u} value={u}>{decodePath(u)}</option>)}
-                                  </select>
-                                  <button className="text-slate-400 hover:text-slate-700 text-xs inline-flex items-center gap-0.5" onClick={() => park.mutate(r.term)} title="שים בצד"><PauseCircle size={13} /> בצד</button>
-                                </div>
-                              </div>
-                              {kwOpen && (
-                                <div className="mt-1.5 mr-5 bg-slate-50 border border-slate-200 rounded-lg p-2">
-                                  <div className="text-[11px] text-slate-500 mb-1">עמודים שבהם "{r.term}" מופיע בתוצאות החיפוש ({termPages.length}):</div>
-                                  <ul className="space-y-1">
-                                    {termPages.map((tp, i) => {
-                                      const isCur = norm(tp.page) === nk;
-                                      const name = titleByPage.get(norm(tp.page)) || decodePath(tp.page);
-                                      return (
-                                        <li key={tp.page} className={`flex items-center justify-between gap-2 text-xs rounded px-1.5 py-1 ${i === 0 ? "bg-emerald-50" : ""}`}>
-                                          <a href={tp.page} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline inline-flex items-center gap-1 min-w-0" title={decodePath(tp.page)}>
-                                            <ExternalLink size={10} className="shrink-0" /><span className="truncate">{name}</span>
-                                            {i === 0 && <span className="badge bg-emerald-100 text-emerald-700 shrink-0">התאמה מיטבית</span>}
-                                            {isCur && <span className="badge bg-slate-200 text-slate-600 shrink-0">העמוד הנוכחי</span>}
-                                          </a>
-                                          <span className="text-slate-400 shrink-0">מיקום {tp.position} · {tp.impressions.toLocaleString()} ח' · {tp.clicks.toLocaleString()} ק'</span>
-                                        </li>
-                                      );
-                                    })}
-                                  </ul>
-                                </div>
-                              )}
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      ) : (
-                        gsc.length === 0 && <p className="text-xs text-slate-400 mt-3"><FileText size={12} className="inline" /> אין נתוני דירוג מ-Search Console לעמוד זה בטווח שנבחר.</p>
-                      )}
-                    </>
+                    )
                   )}
                 </div>
               );
