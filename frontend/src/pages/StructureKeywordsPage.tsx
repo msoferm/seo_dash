@@ -8,6 +8,7 @@ import type { KwPageRow, KeywordTarget } from "../api";
 import PageHeader from "../components/PageHeader";
 import DataSourceBanner from "../components/DataSourceBanner";
 import Spinner from "../components/Spinner";
+import StructureChat from "../components/StructureChat";
 
 function fmt(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -349,6 +350,9 @@ export default function StructureKeywordsPage() {
     <div>
       <PageHeader title="ביטויי יעד ועמודי יעד" subtitle={client ? `${client.name} · הגדרת עמוד היעד לכל ביטוי` : "ביטויי יעד ועמודי יעד"} />
       <DataSourceBanner cid={cid} match={["Search Console"]} />
+
+      {/* AI consultant: knows all keywords, pages, cannibalization, targets and user-intent analyses */}
+      <StructureChat cid={cid} from={from} to={to} />
 
       {/* #6: new written pages that still need a target-page decision */}
       {newPages.length > 0 && (

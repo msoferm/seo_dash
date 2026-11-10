@@ -1791,3 +1791,9 @@ export async function clearKwWritten(clientId: number, keyword: string): Promise
   const { error } = await supabase.from("kw_written").delete().eq("client_id", clientId).eq("keyword", keyword);
   if (error) throw error;
 }
+
+// --- AI consultant on the structure tab ("ביטויי יעד ועמודי יעד") ---
+export interface StructureChatMsg { role: "user" | "assistant"; content: string }
+export async function structureChat(clientId: number, from: string, to: string, messages: StructureChatMsg[]): Promise<{ reply: string; stats: { keywords: number; pages: number } }> {
+  return await invokeFn("structure-chat", { client_id: clientId, from, to, messages });
+}
