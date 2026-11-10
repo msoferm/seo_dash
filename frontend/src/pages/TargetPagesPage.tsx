@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Layers, Search, ExternalLink, Target, Plus, X, Loader2, ArrowUpDown, FilePlus, PauseCircle, ChevronDown, ChevronUp, FileText } from "lucide-react";
+import { Layers, Search, ExternalLink, Target, Plus, X, Loader2, ArrowUpDown, FilePlus, PauseCircle, ChevronDown, ChevronUp, FileText, Undo2 } from "lucide-react";
 import * as api from "../api";
 import type { KwPageRow, KeywordTarget, PageKeyword } from "../api";
 import PageHeader from "../components/PageHeader";
@@ -53,6 +53,27 @@ export default function TargetPagesPage() {
   const move = useMutation({ mutationFn: (p: { kw: string; page: string }) => api.moveKeywordToPage(cid, p.kw, p.page), onSuccess: invTargets });
   const park = useMutation({ mutationFn: (kw: string) => api.parkKeyword(cid, kw), onSuccess: invTargets });
   const delTarget = useMutation({ mutationFn: (id: number) => api.deleteKeywordTarget(id), onSuccess: invTargets });
+  // "החזר לביטויי יעד": undo every decision on these keywords so they return to the pending list
+  // of the structure tab. Same rule as its undo button: keep a row only to preserve its notes.
+  const restore = useMutation({
+    mutationFn: async (kws: string[]) => {
+      for (const kw of kws) {
+        const t = (targets || []).find((x) => x.keyword === kw);
+        if (t) {
+          if (t.notes) await api.upsertKeywordTarget(cid, { keyword: kw, page_url: null, intent: "strengthen", notes: t.notes });
+          else await api.deleteKeywordTarget(t.id);
+        }
+        for (const pk of (pageKws || []).filter((x) => x.keyword === kw)) await api.deletePageKeyword(pk.id);
+      }
+    },
+    onSuccess: () => { invTargets(); invPageKws(); qc.invalidateQueries({ queryKey: ["kw-targets", cid] }); },
+  });
+  const restoreBtn = (kws: string[], label = "החזר לביטויי יעד") => (
+    <button className="text-xs text-amber-700 hover:text-amber-900 inline-flex items-center gap-0.5 whitespace-nowrap" disabled={restore.isPending}
+      title='מבטל את ההחלטה והביטוי חוזר לרשימת הממתינים בלשונית "ביטויי יעד ועמודי יעד"' onClick={() => restore.mutate(kws)}>
+      <Undo2 size={12} /> {label}
+    </button>
+  );
 
   // GSC rows grouped by page, filtered by position/impressions.
   const byPage = useMemo(() => {
@@ -176,7 +197,7 @@ export default function TargetPagesPage() {
                       <option value="">צרף לעמוד…</option>
                       {allPageUrls.map((u) => <option key={u} value={u}>{decodePath(u)}</option>)}
                     </select>
-                    <button className="text-slate-400 hover:text-rose-600 p-1" title="הסר מהצד" onClick={() => delTarget.mutate(t.id)}><X size={14} /></button>
+                    {restoreBtn([t.keyword])}
                   </div>
                 </li>
               ))}
@@ -256,7 +277,16 @@ export default function TargetPagesPage() {
                       </button>
                       <a href={page} target="_blank" rel="noreferrer" className="text-xs text-brand-600 hover:underline inline-flex items-center gap-1 min-w-0 mt-0.5"><ExternalLink size={11} className="shrink-0" /><span className="truncate">{decodePath(page)}</span></a>
                     </div>
-                    <span className="text-xs text-slate-400 shrink-0">{gsc.length} ביטויים · {totalImpr.toLocaleString()} חשיפות · {totalClicks.toLocaleString()} קליקים</span>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="text-xs text-slate-400">{gsc.length} ביטויים · {totalImpr.toLocaleString()} חשיפות · {totalClicks.toLocaleString()} קליקים</span>
+                      {targetKws.length + secondary.length > 0 && (
+                        <button className="text-xs text-amber-700 hover:text-amber-900 inline-flex items-center gap-0.5 border border-amber-200 bg-amber-50 rounded px-2 py-0.5" disabled={restore.isPending}
+                          title='כל ביטויי היעד והמשנה של העמוד חוזרים לרשימת הממתינים בלשונית "ביטויי יעד ועמודי יעד"'
+                          onClick={() => { const kws = [...targetKws, ...secondary.map((s) => s.keyword)]; if (confirm(`להחזיר ${kws.length} ביטויים של העמוד ללשונית "ביטויי יעד ועמודי יעד"?\n\n${kws.join("\n")}`)) restore.mutate(kws); }}>
+                          <Undo2 size={12} /> החזר את כל ביטויי העמוד
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {isOpen && (
@@ -311,7 +341,9 @@ export default function TargetPagesPage() {
                                     <td className="py-1.5 px-2 whitespace-nowrap">{r ? `${(r.ctr * 100).toFixed(1)}%` : <span className="text-slate-300">—</span>}</td>
                                     <td className="py-1.5 px-2">
                                       {kind === "secondary" ? (
-                                        <button className="text-xs text-blue-500 hover:text-rose-600 inline-flex items-center gap-0.5" title="הסר ביטוי משנה" onClick={() => removeSecondary.mutate(secId)}><X size={12} /> הסר</button>
+                                        restoreBtn([term])
+                                      ) : kind === "target" ? (
+                                        restoreBtn([term])
                                       ) : kind === "other" ? (
                                         <div className="flex items-center gap-1.5 flex-wrap">
                                           <button className="btn-secondary text-xs py-0.5 px-2 border-blue-200 text-blue-700" onClick={() => addSecondary.mutate({ page, kw: term })} title="הוסף כביטוי משנה לעמוד זה"><Plus size={12} /> ביטוי משנה</button>
@@ -321,6 +353,7 @@ export default function TargetPagesPage() {
                                             {allPageUrls.filter((u) => norm(u) !== nk).map((u) => <option key={u} value={u}>{decodePath(u)}</option>)}
                                           </select>
                                           <button className="text-slate-400 hover:text-slate-700 text-xs inline-flex items-center gap-0.5" onClick={() => park.mutate(term)} title="שים בצד"><PauseCircle size={13} /> בצד</button>
+                                          {otherTarget && restoreBtn([term])}
                                         </div>
                                       ) : null}
                                     </td>
