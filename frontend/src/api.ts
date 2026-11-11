@@ -1810,7 +1810,7 @@ export interface StructureDecision {
   keywords: string[]; pages: string[]; actions: StructureAction[]; accept_mode: "full" | "partial" | "note"; note: string | null;
   color: number; prev_targets: any[]; task_ids: number[]; created_at: string;
 }
-export async function getStructureAnalysis(clientId: number): Promise<{ recs: StructureRec[]; date_from: string; date_to: string; created_at: string } | null> {
+export async function getStructureAnalysis(clientId: number): Promise<{ recs: StructureRec[]; date_from: string; date_to: string; created_at: string; debug?: { diag: { part: string; error?: string; stop?: string; parsed?: number; sample?: string }[]; dropped: number } | null } | null> {
   const { data, error } = await supabase.from("structure_ai_analysis").select("*").eq("client_id", clientId).maybeSingle();
   if (error) throw error;
   return data;

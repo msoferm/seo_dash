@@ -6,7 +6,7 @@
  * Stateless: the frontend keeps the conversation and sends it with each call. Read-only.
  * action "analyze" (no messages): one combined AI analysis in 4 parallel parts (same-intent groups,
  * cannibalization, unassigned keywords, new pages). Returns { recs } and saves them to structure_ai_analysis.
- * rev: 2026-11-11a
+ * rev: 2026-11-11b
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
@@ -212,30 +212,67 @@ Deno.serve(async (req) => {
       const FORMAT =
         'החזר JSON תקין בלבד, בלי טקסט לפניו או אחריו, בפורמט: {"recs":[{"title":"<כותרת קצרה של ההמלצה>","explanation":"<למה — נימוק מבוסס נתונים: כוונה, חשיפות, מיקום, איזה עמוד חזק>","keywords":["<מילות המפתח המדויקות כפי שהן בנתונים>"],"pages":["<מזהי העמודים הרלוונטיים, למשל P3>"],' +
         '"actions":[{"keyword":"<מילה>","target":"<מזהה עמוד היעד, או new לעמוד חדש>"}],"extra_steps":"<צעדים נוספים, למשל מה לעשות עם עמוד מתחרה; ריק אם אין>","new_page_title":"<רק אם יש עמוד חדש>","priority":"high|medium|low"}]}. ' +
-        "עד 8 המלצות, מהחשובה ביותר. השתמש רק במילים ובמזהי עמודים שקיימים בנתונים. בטקסט החופשי (title/explanation/extra_steps) כתוב נתיבי עמודים ולא מזהים.";
-      const results = await Promise.all(PARTS.map(async (p) => {
+        "עד 6 המלצות, מהחשובה ביותר. explanation עד 3 משפטים. העתק כל מילת מפתח בדיוק כפי שהיא מופיעה בנתונים. השתמש רק במילים ובמזהי עמודים שקיימים בנתונים. בטקסט החופשי (title/explanation/extra_steps) כתוב נתיבי עמודים ולא מזהים.";
+      // Keyword lookup tolerant to spacing/case differences in the model's output.
+      const kwKey = (k: string) => String(k || "").replace(/["'״׳]/g, "").replace(/s+/g, " ").trim().toLowerCase();
+      const kwByKey = new Map<string, string>();
+      for (const k of byKw.keys()) kwByKey.set(kwKey(k), k);
+      const realKw = (k: unknown) => kwByKey.get(kwKey(String(k))) || null;
+      // Parse {"recs":[...]} — if the answer was cut off, keep every rec object that did complete.
+      const parseRecs = (text: string): any[] => {
+        try { const j = extractJson(text); if (Array.isArray(j?.recs)) return j.recs; if (Array.isArray(j)) return j; } catch { /* salvage below */ }
+        const i = text.indexOf("["); if (i < 0) return [];
+        const out: any[] = []; let depth = 0, objStart = -1, inStr = false, esc = false;
+        for (let k = i + 1; k < text.length; k++) {
+          const ch = text[k];
+          if (inStr) { if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') inStr = false; continue; }
+          if (ch === '"') inStr = true;
+          else if (ch === "{") { if (depth === 0) objStart = k; depth++; }
+          else if (ch === "}") { depth--; if (depth === 0 && objStart >= 0) { try { out.push(JSON.parse(text.slice(objStart, k + 1))); } catch { /* skip */ } objStart = -1; } }
+        }
+        return out;
+      };
+      const callWithRetry = async (content: string) => {
+        for (let attempt = 0; ; attempt++) {
+          try { return await callClaude({ model: DEFAULT_MODEL, max_tokens: 8000, system, messages: [{ role: "user", content }] }); }
+          catch (e) {
+            const msg = (e as Error).message || "";
+            if (attempt < 2 && /(429|529|500|503|overloaded|rate)/i.test(msg)) { await new Promise((r) => setTimeout(r, 4000 * (attempt + 1))); continue; }
+            throw e;
+          }
+        }
+      };
+      const diag: any[] = [];
+      const results = await Promise.all(PARTS.map(async (p, idx) => {
+        await new Promise((r) => setTimeout(r, idx * 1500)); // stagger to soften rate limits
         try {
-          const resp = await callClaude({ model: DEFAULT_MODEL, max_tokens: 5000, system, messages: [{ role: "user", content: `${p.ask}\n\n${FORMAT}` }] });
-          const parsed: any = extractJson(textOf(resp));
-          return (Array.isArray(parsed?.recs) ? parsed.recs : []).map((r: any) => ({ ...r, type: p.type }));
-        } catch (e) { console.error(p.type, e); return []; }
+          const resp = await callWithRetry(`${p.ask}
+
+${FORMAT}`);
+          const text = textOf(resp);
+          const list = parseRecs(text);
+          diag.push({ part: p.type, stop: resp.stop_reason, chars: text.length, parsed: list.length, sample: list.length ? undefined : text.slice(0, 300) });
+          return list.map((r: any) => ({ ...r, type: p.type }));
+        } catch (e) { console.error(p.type, e); diag.push({ part: p.type, error: (e as Error).message.slice(0, 300) }); return []; }
       }));
       const stamp = Date.now().toString(36);
       const resolve = (t: string) => { const id = String(t || "").trim().toUpperCase(); return pageUrl.get(id) || null; };
+      let dropped = 0;
       const recs = results.flat().map((r: any, i: number) => {
         const actions = (Array.isArray(r.actions) ? r.actions : [])
-          .filter((a: any) => a && byKw.has(String(a.keyword || "").trim()))
-          .map((a: any) => { const u = String(a.target || "").toLowerCase() === "new" ? null : resolve(a.target); return { keyword: String(a.keyword).trim(), page_url: u, intent: u ? "strengthen" : "new_page" }; });
-        const keywords = [...new Set([...(r.keywords || []).map((k: any) => String(k).trim()), ...actions.map((a: any) => a.keyword)])].filter((k) => byKw.has(k));
+          .map((a: any) => ({ a, kw: realKw(a?.keyword) })).filter((x: any) => x.kw)
+          .map(({ a, kw }: any) => { const u = String(a.target || "").toLowerCase() === "new" ? null : resolve(a.target); return { keyword: kw, page_url: u, intent: u ? "strengthen" : "new_page" }; });
+        const keywords = [...new Set([...(r.keywords || []).map(realKw), ...actions.map((a: any) => a.keyword)].filter(Boolean))] as string[];
         const pages = [...new Set([...(r.pages || []).map(resolve), ...actions.map((a: any) => a.page_url)].filter(Boolean))] as string[];
         return {
           key: `${r.type}-${stamp}-${i}`, type: r.type, title: unId(r.title), explanation: unId(r.explanation),
           extra_steps: unId(r.extra_steps || ""), new_page_title: r.new_page_title || "", priority: ["high", "medium", "low"].includes(r.priority) ? r.priority : "medium",
           keywords, pages, actions,
         };
-      }).filter((r) => r.keywords.length > 0);
-      await sb.from("structure_ai_analysis").upsert({ client_id, recs, date_from: from, date_to: to, created_at: new Date().toISOString() });
-      return jsonResponse({ recs });
+      }).filter((r) => { if (r.keywords.length > 0) return true; dropped++; return false; });
+      const failed = diag.filter((d) => d.error).map((d) => d.part);
+      await sb.from("structure_ai_analysis").upsert({ client_id, recs, date_from: from, date_to: to, created_at: new Date().toISOString(), debug: { diag, dropped } });
+      return jsonResponse({ recs, failed, diag, dropped });
     }
 
     const messages: Message[] = convo.slice(-16).map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") }));

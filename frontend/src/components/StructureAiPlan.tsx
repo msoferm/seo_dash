@@ -113,7 +113,22 @@ export default function StructureAiPlan({ cid, from, to, decisions, selection, o
           )}
 
           {/* Open recommendations, by category */}
-          {analysis && recs.length === 0 && !run.isPending && <p className="text-sm text-slate-400 mt-4">אין המלצות פתוחות. אפשר להריץ ניתוח מחדש.</p>}
+          {analysis && recs.length === 0 && !run.isPending && (
+            (analysis.recs || []).length > 0
+              ? <p className="text-sm text-slate-400 mt-4">כל ההמלצות מהניתוח האחרון כבר אושרו. אפשר להריץ ניתוח מחדש.</p>
+              : (
+                <div className="mt-4 text-sm bg-rose-50 border border-rose-200 rounded-lg p-3 text-rose-800 space-y-1">
+                  <div className="font-medium">הניתוח האחרון לא החזיר המלצות.</div>
+                  {(analysis.debug?.diag || []).map((d) => (
+                    <div key={d.part} className="text-xs">
+                      {REC_TYPE_LABEL[d.part] || d.part}: {d.error ? `נכשל: ${d.error}` : `${d.parsed ?? 0} המלצות${d.stop === "max_tokens" ? " (התשובה נקטעה)" : ""}`}
+                    </div>
+                  ))}
+                  {!!analysis.debug?.dropped && <div className="text-xs">{analysis.debug.dropped} המלצות נפסלו כי מילות המפתח בהן לא נמצאו בנתונים.</div>}
+                  <div className="text-xs text-rose-600">נסה להריץ שוב. אם זה חוזר, העבר לי את ההודעה הזו.</div>
+                </div>
+              )
+          )}
           {TYPE_ORDER.map((type) => {
             const list = recs.filter((r) => r.type === type);
             if (!list.length) return null;
