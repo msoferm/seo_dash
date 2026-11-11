@@ -1797,3 +1797,88 @@ export interface StructureChatMsg { role: "user" | "assistant"; content: string 
 export async function structureChat(clientId: number, from: string, to: string, messages: StructureChatMsg[]): Promise<{ reply: string; stats: { keywords: number; pages: number } }> {
   return await invokeFn("structure-chat", { client_id: clientId, from, to, messages });
 }
+
+// --- Structure tab: combined AI analysis + accepted decisions ---
+export type StructureRecType = "same_intent" | "cannibalization" | "unassigned" | "new_page";
+export interface StructureAction { keyword: string; page_url: string | null; intent: "strengthen" | "new_page" }
+export interface StructureRec {
+  key: string; type: StructureRecType; title: string; explanation: string; extra_steps: string; new_page_title: string;
+  priority: "high" | "medium" | "low"; keywords: string[]; pages: string[]; actions: StructureAction[];
+}
+export interface StructureDecision {
+  id: number; client_id: number; rec_key: string | null; rec_type: StructureRecType | null; title: string; explanation: string | null;
+  keywords: string[]; pages: string[]; actions: StructureAction[]; accept_mode: "full" | "partial" | "note"; note: string | null;
+  color: number; prev_targets: any[]; task_ids: number[]; created_at: string;
+}
+export async function getStructureAnalysis(clientId: number): Promise<{ recs: StructureRec[]; date_from: string; date_to: string; created_at: string } | null> {
+  const { data, error } = await supabase.from("structure_ai_analysis").select("*").eq("client_id", clientId).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+export async function runStructureAnalysis(clientId: number, from: string, to: string): Promise<{ recs: StructureRec[] }> {
+  return await invokeFn("structure-chat", { client_id: clientId, from, to, action: "analyze" });
+}
+export async function listStructureDecisions(clientId: number): Promise<StructureDecision[]> {
+  const { data, error } = await supabase.from("structure_decisions").select("*").eq("client_id", clientId).order("created_at");
+  if (error) throw error;
+  return (data || []) as StructureDecision[];
+}
+const pathOf = (u: string) => { try { return decodeURIComponent(u.replace(/^https?:\/\/[^/]+/, "")) || u; } catch { return u; } };
+/** Accept an AI recommendation: snapshot the current targets, apply the chosen keyword→page
+ *  actions, record the decision and open a work-plan task for it. Undo restores the snapshot. */
+export async function acceptStructureDecision(clientId: number, rec: StructureRec, p: { actions: StructureAction[]; mode: "full" | "partial" | "note"; note: string | null; color: number }): Promise<void> {
+  const kws = p.actions.map((a) => a.keyword);
+  const { data: prev, error: e1 } = kws.length ? await supabase.from("keyword_targets").select("*").eq("client_id", clientId).in("keyword", kws) : { data: [], error: null };
+  if (e1) throw e1;
+  const prevBy = new Map((prev || []).map((r: any) => [r.keyword, r]));
+  const prev_targets = kws.map((k) => prevBy.get(k) || { keyword: k, missing: true });
+  const { data: dec, error: e2 } = await supabase.from("structure_decisions").insert({
+    client_id: clientId, rec_key: rec.key, rec_type: rec.type, title: rec.title, explanation: rec.explanation,
+    keywords: rec.keywords, pages: rec.pages, actions: p.actions, accept_mode: p.mode, note: p.note, color: p.color, prev_targets,
+  }).select().single();
+  if (e2) throw e2;
+  for (const a of p.actions) {
+    const old: any = prevBy.get(a.keyword);
+    const { error } = await supabase.from("keyword_targets").upsert({
+      client_id: clientId, keyword: a.keyword, page_url: a.page_url, intent: a.intent, is_primary: true, status: "active",
+      notes: old?.notes ?? null, updated_at: new Date().toISOString(),
+    }, { onConflict: "client_id,keyword" });
+    if (error) throw error;
+  }
+  const lines = [
+    rec.explanation ? `למה: ${rec.explanation}` : "",
+    p.actions.length ? `שיוכים שבוצעו:\n${p.actions.map((a) => `• ${a.keyword} ← ${a.page_url ? pathOf(a.page_url) : (rec.new_page_title ? `עמוד חדש: ${rec.new_page_title}` : "עמוד חדש")}`).join("\n")}` : "",
+    rec.extra_steps ? `צעדים נוספים: ${rec.extra_steps}` : "",
+    p.note ? `הערת צוות: ${p.note}` : "",
+  ].filter(Boolean).join("\n\n");
+  const newPage = p.actions.some((a) => a.intent === "new_page");
+  const firstPage = p.actions.find((a) => a.page_url)?.page_url || rec.pages[0] || null;
+  const { data: task, error: e3 } = await supabase.from("tasks").insert({
+    client_id: clientId, title: `מבנה אתר: ${rec.title}`, details: lines, status: "open", source: "claude",
+    priority: rec.priority, category: "content", kind: "manual", source_type: "structure_decision", source_ref: `decision-${dec.id}`,
+    page_url: newPage ? null : firstPage,
+  }).select("id").single();
+  if (e3) throw e3;
+  await supabase.from("structure_decisions").update({ task_ids: [task.id] }).eq("id", dec.id);
+}
+/** Undo a decision: restore each keyword's previous target (only where the decision's value is
+ *  still in place), delete its open tasks, and remove the decision. */
+export async function undoStructureDecision(d: StructureDecision): Promise<void> {
+  const kws = (d.actions || []).map((a) => a.keyword);
+  const { data: cur } = kws.length ? await supabase.from("keyword_targets").select("*").eq("client_id", d.client_id).in("keyword", kws) : { data: [] };
+  const curBy = new Map((cur || []).map((r: any) => [r.keyword, r]));
+  for (const a of d.actions || []) {
+    const c: any = curBy.get(a.keyword);
+    if (!c || (c.page_url || null) !== (a.page_url || null) || c.intent !== a.intent) continue; // changed since — leave it
+    const p: any = (d.prev_targets || []).find((x: any) => x.keyword === a.keyword);
+    if (!p || p.missing) {
+      if (c.notes) await supabase.from("keyword_targets").update({ page_url: null, intent: "strengthen", updated_at: new Date().toISOString() }).eq("id", c.id);
+      else await supabase.from("keyword_targets").delete().eq("id", c.id);
+    } else {
+      await supabase.from("keyword_targets").update({ page_url: p.page_url, intent: p.intent, status: p.status, notes: c.notes ?? p.notes, is_primary: p.is_primary, updated_at: new Date().toISOString() }).eq("id", c.id);
+    }
+  }
+  if (d.task_ids?.length) await supabase.from("tasks").delete().in("id", d.task_ids).neq("status", "done");
+  const { error } = await supabase.from("structure_decisions").delete().eq("id", d.id);
+  if (error) throw error;
+}

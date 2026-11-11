@@ -4,11 +4,13 @@
  * decisions, secondary keywords, user-intent analyses, crawled page titles/H1, cannibalization)
  * into a cached system prompt, and lets Claude drill into the long tail with lookup tools.
  * Stateless: the frontend keeps the conversation and sends it with each call. Read-only.
- * rev: 2026-11-10a
+ * action "analyze" (no messages): one combined AI analysis in 4 parallel parts (same-intent groups,
+ * cannibalization, unassigned keywords, new pages). Returns { recs } and saves them to structure_ai_analysis.
+ * rev: 2026-11-11a
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
-import { callClaude, DEFAULT_MODEL, type Message, type ToolDefinition } from "../_shared/anthropic.ts";
+import { callClaude, DEFAULT_MODEL, textOf, extractJson, type Message, type ToolDefinition } from "../_shared/anthropic.ts";
 
 const MAX_KW_IN_SNAPSHOT = 700;   // keywords listed in the system prompt (by impressions)
 const MAX_PAGES_PER_KW = 5;
@@ -41,8 +43,9 @@ Deno.serve(async (req) => {
     const { sb } = await requireTeamMember(req);
     const body = await req.json();
     const { client_id, from, to } = body;
+    const analyze = body.action === "analyze";
     const convo: { role: string; content: string }[] = Array.isArray(body.messages) ? body.messages : [];
-    if (!client_id || !from || !to || convo.length === 0) return errorResponse("חסר client_id / טווח תאריכים / הודעה", 400);
+    if (!client_id || !from || !to || (!analyze && convo.length === 0)) return errorResponse("חסר client_id / טווח תאריכים / הודעה", 400);
 
     const { data: client } = await sb.from("clients").select("name, domain, notes").eq("id", client_id).maybeSingle();
     if (!client) return errorResponse("לקוח לא נמצא", 404);
@@ -62,6 +65,7 @@ Deno.serve(async (req) => {
       sb.from("pages").select("url, title, h1, meta_description").eq("client_id", client_id).not("last_full_crawl", "is", null),
       sb.from("kw_written").select("keyword, written_url").eq("client_id", client_id),
     ]);
+    const { data: decisions } = await sb.from("structure_decisions").select("title, keywords, note").eq("client_id", client_id).order("created_at");
 
     // ---- Page registry (short ids keep the prompt compact) ----
     const pageId = new Map<string, string>();
@@ -131,6 +135,7 @@ Deno.serve(async (req) => {
       return `${idOf(p.page_url)}${p.quality_score ? ` (ציון ${p.quality_score}/10)` : ""}: ${txt}${concl ? ` | מסקנות: ${concl}` : ""}`;
     });
     const cannibal = kws.filter((k) => k.pages.length > 1 && k.pages[1].impressions >= 5).slice(0, 150);
+    const decisionLines = (decisions || []).map((d: any) => `${d.title} | מילים: ${(d.keywords || []).join(", ")}${d.note ? ` | הערת צוות: ${d.note}` : ""}`);
     const writtenLines = (written || []).map((w: any) => `${w.keyword}${w.written_url ? ` → ${decodePath(w.written_url)}` : ""}`);
 
     const snapshot = [
@@ -143,6 +148,7 @@ Deno.serve(async (req) => {
       `\n=== החלטות ביטוי יעד → עמוד יעד (לשונית "ביטויי יעד ועמודי יעד") — ${targetLines.length} ===`, ...(targetLines.length ? targetLines : ["אין עדיין"]),
       `\n=== ביטויי משנה לפי עמוד (לשונית "עמודי יעד וביטויי משנה") ===`, ...(secLines.length ? secLines : ["אין עדיין"]),
       `\n=== ניתוחי כוונת משתמש שנשמרו (לשונית "כוונת המשתמש") ===`, ...(intentLines.length ? intentLines : ["אין עדיין"]),
+      `\n=== החלטות מבנה שהצוות כבר אישר מניתוחי AI קודמים (אל תמליץ עליהן שוב) ===`, ...(decisionLines.length ? decisionLines : ["אין"]),
       `\n=== מילים שסומנו "נכתב" (לשונית "מילים ללא עמוד") ===`, ...(writtenLines.length ? writtenLines : ["אין"]),
     ].join("\n");
 
@@ -155,7 +161,7 @@ Deno.serve(async (req) => {
           "למילים שלא מופיעות בתמונת המצב השתמש ב-search_keywords; לפרטים מלאים על עמוד (כולל ניתוח כוונה מלא) השתמש ב-get_page.\n" +
           "כללים לשיוך מילים לעמוד: מילים עם אותה כוונת משתמש (אותו צורך, אותו שלב במסע, אותה תשובה מצופה) — באותו עמוד; כוונה שונה (מידע מול רכישה, מוצר שונה, קהל שונה) — עמודים נפרדים. " +
           "רמז חזק לכוונה זהה: גוגל כבר מדרג את אותו עמוד על שתי המילים. קניבליזציה: כמה עמודים של האתר מתחרים על אותה מילה ומפצלים חשיפות/מיקום. " +
-          "כשאתה ממליץ — נמק (חשיפות, מיקום, איזה עמוד חזק יותר, כוונה), ציין עמודים בנתיב שלהם (לא במזהה P בלבד), והבחן בין עובדה מהנתונים לבין הערכה שלך. " +
+          "כשאתה ממליץ — נמק (חשיפות, מיקום, איזה עמוד חזק יותר, כוונה), ציין עמודים תמיד לפי הנתיב או ה-title שלהם — לעולם אל תכתוב למשתמש מזהים כמו P8 (הם קיצור פנימי בלבד ואינם מוכרים לו), והבחן בין עובדה מהנתונים לבין הערכה שלך. " +
           "ענה בעברית, ממוקד וברור, עם כותרות קצרות ורשימות כשזה עוזר. אתה רק מייעץ — אינך משנה דבר באתר או במערכת.\n\n" +
           `לקוח: ${client.name} (${client.domain}).${client.notes ? ` הערות על העסק: ${client.notes}` : ""}\n\n${snapshot}`,
         cache_control: { type: "ephemeral" as const },
@@ -193,6 +199,45 @@ Deno.serve(async (req) => {
       return { error: "כלי לא מוכר" };
     };
 
+    // Internal page ids (P8) must never reach the user: swap any that slip through for the page path.
+    const unId = (t: string) => String(t || "").replace(/\bP(\d+)\b/g, (m) => { const u = pageUrl.get(m); return u ? decodePath(u) : m; });
+
+    if (analyze) {
+      const PARTS: { type: string; ask: string }[] = [
+        { type: "same_intent", ask: "מצא קבוצות של מילות מפתח עם אותה כוונת משתמש שכדאי לרכז באותו עמוד (קיים או חדש). לכל קבוצה: איזה עמוד צריך להיות עמוד היעד של כולן, ולמה הכוונה זהה. התמקד במילים בעלות חשיפות משמעותיות." },
+        { type: "cannibalization", ask: "מצא את מקרי הקניבליזציה החשובים (כמה עמודים מתחרים על אותה מילה או אותה כוונה). לכל מקרה: איזה עמוד צריך לזכות (עמוד היעד) ולמה, ומה לעשות עם העמודים המתחרים (איחוד, הפניית 301, שינוי מיקוד, קישור פנימי לעמוד הזוכה)." },
+        { type: "unassigned", ask: "מצא מילים שעדיין אין להן החלטת יעד (אין 'יעד:' בשורה שלהן) וקבע לכל אחת לאיזה עמוד קיים הכי מתאים לשייך אותה, ולמה. קבץ להמלצה אחת מילים שמשויכות לאותו עמוד." },
+        { type: "new_page", ask: "מצא מילים שדורשות עמוד חדש נפרד כי הכוונה שלהן שונה מכל עמוד קיים באתר. קבץ להמלצה אחת מילים שצריכות להיכנס לאותו עמוד חדש, והצע כותרת לעמוד החדש." },
+      ];
+      const FORMAT =
+        'החזר JSON תקין בלבד, בלי טקסט לפניו או אחריו, בפורמט: {"recs":[{"title":"<כותרת קצרה של ההמלצה>","explanation":"<למה — נימוק מבוסס נתונים: כוונה, חשיפות, מיקום, איזה עמוד חזק>","keywords":["<מילות המפתח המדויקות כפי שהן בנתונים>"],"pages":["<מזהי העמודים הרלוונטיים, למשל P3>"],' +
+        '"actions":[{"keyword":"<מילה>","target":"<מזהה עמוד היעד, או new לעמוד חדש>"}],"extra_steps":"<צעדים נוספים, למשל מה לעשות עם עמוד מתחרה; ריק אם אין>","new_page_title":"<רק אם יש עמוד חדש>","priority":"high|medium|low"}]}. ' +
+        "עד 8 המלצות, מהחשובה ביותר. השתמש רק במילים ובמזהי עמודים שקיימים בנתונים. בטקסט החופשי (title/explanation/extra_steps) כתוב נתיבי עמודים ולא מזהים.";
+      const results = await Promise.all(PARTS.map(async (p) => {
+        try {
+          const resp = await callClaude({ model: DEFAULT_MODEL, max_tokens: 5000, system, messages: [{ role: "user", content: `${p.ask}\n\n${FORMAT}` }] });
+          const parsed: any = extractJson(textOf(resp));
+          return (Array.isArray(parsed?.recs) ? parsed.recs : []).map((r: any) => ({ ...r, type: p.type }));
+        } catch (e) { console.error(p.type, e); return []; }
+      }));
+      const stamp = Date.now().toString(36);
+      const resolve = (t: string) => { const id = String(t || "").trim().toUpperCase(); return pageUrl.get(id) || null; };
+      const recs = results.flat().map((r: any, i: number) => {
+        const actions = (Array.isArray(r.actions) ? r.actions : [])
+          .filter((a: any) => a && byKw.has(String(a.keyword || "").trim()))
+          .map((a: any) => { const u = String(a.target || "").toLowerCase() === "new" ? null : resolve(a.target); return { keyword: String(a.keyword).trim(), page_url: u, intent: u ? "strengthen" : "new_page" }; });
+        const keywords = [...new Set([...(r.keywords || []).map((k: any) => String(k).trim()), ...actions.map((a: any) => a.keyword)])].filter((k) => byKw.has(k));
+        const pages = [...new Set([...(r.pages || []).map(resolve), ...actions.map((a: any) => a.page_url)].filter(Boolean))] as string[];
+        return {
+          key: `${r.type}-${stamp}-${i}`, type: r.type, title: unId(r.title), explanation: unId(r.explanation),
+          extra_steps: unId(r.extra_steps || ""), new_page_title: r.new_page_title || "", priority: ["high", "medium", "low"].includes(r.priority) ? r.priority : "medium",
+          keywords, pages, actions,
+        };
+      }).filter((r) => r.keywords.length > 0);
+      await sb.from("structure_ai_analysis").upsert({ client_id, recs, date_from: from, date_to: to, created_at: new Date().toISOString() });
+      return jsonResponse({ recs });
+    }
+
     const messages: Message[] = convo.slice(-16).map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") }));
     let reply = "";
     for (let iter = 0; iter < 6; iter++) {
@@ -209,6 +254,7 @@ Deno.serve(async (req) => {
       }
       messages.push({ role: "user", content: results });
     }
+    reply = unId(reply);
     return jsonResponse({ reply: reply || "לא הצלחתי להגיע לתשובה מלאה — נסה לנסח את השאלה אחרת.", stats: { keywords: kws.length, pages: pageUrl.size } });
   } catch (e) {
     console.error(e);

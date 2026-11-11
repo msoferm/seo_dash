@@ -64,7 +64,14 @@ Deno.serve(async (req) => {
     for (const t of (ktargets || []) as any[]) targetByTerm.set(t.keyword, { page: t.page_url || null, intent: t.intent, notes: (t.notes || null) });
     // A team note on a keyword (from the structure tab) is appended to every recommendation on
     // that term, so the strategic instruction travels into content suggestions and the work plan.
-    const noteSuffix = (term: string) => { const n = targetByTerm.get(term)?.notes; return n ? ` [הערת צוות (מבנה ומילות מפתח): ${n}]` : ""; };
+    // Accepted structure decisions (from the combined AI analysis) travel with every rec on their keywords.
+    const { data: decData } = await sb.from("structure_decisions").select("title, keywords, note").eq("client_id", client_id);
+    const decisionByTerm = new Map<string, string>();
+    for (const d of (decData || []) as any[]) for (const k of d.keywords || []) decisionByTerm.set(k, `${d.title}${d.note ? ` — ${d.note}` : ""}`);
+    const noteSuffix = (term: string) => {
+      const n = targetByTerm.get(term)?.notes; const d = decisionByTerm.get(term);
+      return `${n ? ` [הערת צוות (מבנה ומילות מפתח): ${n}]` : ""}${d ? ` [החלטת מבנה שאושרה: ${d}]` : ""}`;
+    };
 
     // Part 2 sync: secondary keywords the team attached to a page ("עמודי יעד וביטויי משנה").
     const { data: pageKwData } = await sb.from("page_keywords").select("page_url, keyword, role").eq("client_id", client_id);

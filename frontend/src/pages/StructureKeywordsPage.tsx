@@ -9,6 +9,8 @@ import PageHeader from "../components/PageHeader";
 import DataSourceBanner from "../components/DataSourceBanner";
 import Spinner from "../components/Spinner";
 import StructureChat from "../components/StructureChat";
+import StructureAiPlan, { type Selection } from "../components/StructureAiPlan";
+import { decisionColor, SELECTED_COLOR } from "../lib/decisionColors";
 
 function fmt(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -151,6 +153,16 @@ export default function StructureKeywordsPage() {
   const { data: posts } = useQuery({ queryKey: ["blog-posts", cid], queryFn: () => api.listBlogPosts(cid), enabled: !!cid });
   const invalidateTargets = () => qc.invalidateQueries({ queryKey: ["kw-targets", cid] });
   const delTarget = useMutation({ mutationFn: (id: number) => api.deleteKeywordTarget(id), onSuccess: invalidateTargets });
+  // Combined AI analysis: accepted decisions color their keywords; the reviewed one is highlighted.
+  const { data: decisions } = useQuery({ queryKey: ["structure-decisions", cid], queryFn: () => api.listStructureDecisions(cid), enabled: !!cid });
+  const [selection, setSelection] = useState<Selection>(null);
+  const [decKwOpen, setDecKwOpen] = useState<Record<string, boolean>>({}); // decided keywords start collapsed
+  const decisionByKw = useMemo(() => {
+    const m = new Map<string, NonNullable<typeof decisions>[number]>();
+    for (const d of decisions || []) for (const k of d.keywords) m.set(k, d); // oldest first → latest wins
+    return m;
+  }, [decisions]);
+  const selectedKws = useMemo(() => new Set(selection?.keywords || []), [selection]);
 
   const targetByTerm = useMemo(() => {
     const m = new Map<string, KeywordTarget>();
@@ -207,6 +219,13 @@ export default function StructureKeywordsPage() {
     for (const arr of bt.values()) arr.sort((a, b) => b.impressions - a.impressions);
     return bt;
   }, [rows, posMax, imprMin]);
+
+  const fullByTerm = useMemo(() => {
+    const bt = new Map<string, KwPageRow[]>();
+    for (const r of rows || []) { if (!bt.has(r.term)) bt.set(r.term, []); bt.get(r.term)!.push(r); }
+    for (const arr of bt.values()) arr.sort((a, b) => b.impressions - a.impressions);
+    return bt;
+  }, [rows]);
 
   // Keyword rows = union of GSC terms and keywords that have a written page (so new pages always show).
   const termEntries = useMemo(() => {
@@ -272,7 +291,37 @@ export default function StructureKeywordsPage() {
     }, 70);
   };
 
-  const renderCard = ({ term, pgs, written }: { term: string; pgs: KwPageRow[]; written: { url: string; title: string; created_at: string }[] }) => {
+  const renderCard = ({ term, pgs, written }: { term: string; pgs: KwPageRow[]; written: { url: string; title: string; created_at: string }[] }, copy = false) => {
+    // Accepted AI decision on this keyword: its own color, collapsed by default, details always shown.
+    const dec = decisionByKw.get(term);
+    const dc = dec ? decisionColor(dec.color) : null;
+    const sel = selectedKws.has(term);
+    const kwOpen = copy || !dec || !!decKwOpen[term];
+    const boxStyle: React.CSSProperties = {
+      ...(dc ? { background: dc.bg, borderColor: dc.border, borderRightWidth: 5 } : {}),
+      ...(sel && !copy ? { outline: `3px solid ${SELECTED_COLOR.border}`, outlineOffset: 1, ...(dc ? {} : { background: SELECTED_COLOR.bg, borderColor: SELECTED_COLOR.border, borderRightWidth: 5 }) } : {}),
+    };
+    const act = dec?.actions.find((a) => a.keyword === term);
+    const decHeader = dec && dc ? (
+      <div className="mb-2 text-xs space-y-0.5" style={{ color: dc.text }}>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {!copy && (
+            <button className="inline-flex items-center gap-1 font-medium text-sm" onClick={() => setDecKwOpen((o) => ({ ...o, [term]: !kwOpen }))} title={kwOpen ? "סגור" : "פתח"}>
+              {kwOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />} {!kwOpen && <span className="text-slate-900">{term}</span>}
+            </button>
+          )}
+          <span className="badge bg-white/80 border" style={{ borderColor: dc.border, color: dc.text }}>החלטה: {dec.title}</span>
+          {act && <span>← {act.page_url ? decodePath(act.page_url) : "עמוד חדש"}</span>}
+        </div>
+        {dec.explanation && <div className={kwOpen ? "" : "line-clamp-2"}><b>למה:</b> {dec.explanation}</div>}
+        {dec.note && <div><b>הערת צוות:</b> {dec.note}</div>}
+      </div>
+    ) : null;
+    if (!kwOpen) {
+      return (
+        <div key={term} data-focus={term} ref={(el) => { rowRefs.current[term] = el; }} className="border rounded-lg p-3" style={boxStyle}>{decHeader}</div>
+      );
+    }
     const total = pgs.reduce((s, r) => s + r.impressions, 0);
     const clicks = pgs.reduce((s, r) => s + r.clicks, 0);
     const avgPos = total > 0 ? (pgs.reduce((s, r) => s + r.position * r.impressions, 0) / total) : (pgs.length ? pgs.reduce((s, r) => s + r.position, 0) / pgs.length : 0);
@@ -289,7 +338,8 @@ export default function StructureKeywordsPage() {
     const newUrlSet = new Set(items.filter((i) => i.isNew).map((i) => norm(i.url)));
     const flashing = flash === term;
     return (
-      <div key={term} data-focus={term} ref={(el) => { rowRefs.current[term] = el; }} className={`border rounded-lg p-3 transition-colors ${flashing ? "border-brand-400 bg-brand-50/60 ring-2 ring-brand-200" : "border-slate-200"}`}>
+      <div key={term} data-focus={copy ? undefined : term} ref={copy ? undefined : (el) => { rowRefs.current[term] = el; }} style={flashing ? undefined : boxStyle} className={`border rounded-lg p-3 transition-colors ${flashing ? "border-brand-400 bg-brand-50/60 ring-2 ring-brand-200" : "border-slate-200"}`}>
+        {decHeader}
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="font-medium text-slate-900 flex items-center gap-2">
             {term}
@@ -353,6 +403,11 @@ export default function StructureKeywordsPage() {
 
       {/* AI consultant: knows all keywords, pages, cannibalization, targets and user-intent analyses */}
       <StructureChat cid={cid} from={from} to={to} />
+
+      {/* Combined AI analysis → recommendations → accepted decisions (colored in the table below) */}
+      <StructureAiPlan cid={cid} from={from} to={to} decisions={decisions || []} selection={selection} onSelect={setSelection}
+        pageOptions={urlOptions.map((o) => ({ url: o.url, label: o.label }))}
+        renderCards={(kws) => kws.map((k) => renderCard({ term: k, pgs: fullByTerm.get(k) || [], written: writtenByTerm.get(k) || [] }, true))} />
 
       {/* #6: new written pages that still need a target-page decision */}
       {newPages.length > 0 && (
@@ -475,7 +530,7 @@ export default function StructureKeywordsPage() {
                 <h3 className="font-semibold flex items-center gap-2 text-slate-800"><FolderCheck size={18} className="text-emerald-600" /> הוגדר עמוד <span className="text-xs font-normal text-slate-400">({definedEntries.length})</span></h3>
                 {definedOpen ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
               </button>
-              {(definedOpen || kwActive || urlActive) &&<div className="space-y-3 mt-3">{definedEntries.map((e) => renderCard(e))}</div>}
+              {(definedOpen || kwActive || urlActive || !!selection) &&<div className="space-y-3 mt-3">{definedEntries.map((e) => renderCard(e))}</div>}
             </div>
           )}
         </>

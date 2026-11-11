@@ -33,6 +33,7 @@ function deepLink(cid: number, t: Task): { href: string; label: string } | null 
   // ?focus=<source_ref> → the tab scrolls to and highlights the exact item (useFocusTarget).
   const f = t.source_ref ? `?focus=${encodeURIComponent(t.source_ref)}` : "";
   if (t.source_type === "recommendation") return { href: `/clients/${cid}/engine${f}`, label: "מנוע המלצות" };
+  if (t.source_type === "structure_decision") return { href: `/clients/${cid}/structure${f}`, label: "החלטת מבנה (ניתוח AI)" };
   if (t.source_type === "keyword_target") return { href: `/clients/${cid}/structure${f}`, label: "ביטויי יעד ועמודי יעד" };
   if (t.source_type === "page_intent") return { href: `/clients/${cid}/user-intent${f}`, label: "כוונת המשתמש" };
   if (t.source_type === "audit") return { href: `/clients/${cid}/seo-tools${f}`, label: "כלי SEO" };
