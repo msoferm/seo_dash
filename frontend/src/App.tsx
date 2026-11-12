@@ -42,6 +42,7 @@ function Sidebar() {
   const inactive = "text-slate-600 hover:bg-slate-100";
   const { data: navCfg } = useQuery({ queryKey: ["nav-config", cid], queryFn: () => api.getNavConfig(cid ? Number(cid) : undefined) });
   const entries = resolveNav(navCfg);
+  const { data: client } = useQuery({ queryKey: ["client", Number(cid)], queryFn: () => api.getClient(Number(cid)), enabled: !!cid });
   const [editOpen, setEditOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const location = useLocation();
@@ -59,7 +60,14 @@ function Sidebar() {
   const isGroupOpen = (id: string) => openGroups[id] ?? (id === activeGroup);
   return (
     <aside className="w-64 bg-white border-l border-slate-200 p-4 flex flex-col gap-1 shrink-0 sticky top-0 h-screen overflow-y-auto">
-      <Link to="/" className="text-xl font-bold text-brand-700 mb-4 px-3">דאשבורד SEO</Link>
+      <Link to="/" className={`text-xl font-bold text-brand-700 px-3 ${cid ? "" : "mb-4"}`}>דאשבורד SEO</Link>
+      {/* The client you're working under, right below the title */}
+      {cid && (
+        <Link to={base} className="mx-3 mb-4 mt-1 text-sm font-semibold text-slate-800 bg-brand-50 border border-brand-100 rounded-lg px-2.5 py-1.5 truncate hover:bg-brand-100" title={client?.domain || ""}>
+          {client ? client.name : "…"}
+          {client?.domain && <span className="block text-xs font-normal text-slate-500 truncate" dir="ltr">{client.domain}</span>}
+        </Link>
+      )}
       <NavLink to="/" end className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>
         <Home size={18} /> כל הלקוחות
       </NavLink>
