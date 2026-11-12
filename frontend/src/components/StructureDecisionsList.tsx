@@ -5,7 +5,8 @@ import { ChevronDown, ChevronUp, Undo2, ExternalLink, CheckCircle2, Brain, Netwo
 import * as api from "../api";
 import type { KwPageRow, StructureDecision } from "../api";
 import { decisionColor, REC_TYPE_LABEL } from "../lib/decisionColors";
-import { Md } from "./StructureChat";
+import { Md } from "./RichText";
+import Considerations from "./Considerations";
 
 function decodePath(u: string): string {
   try { return decodeURIComponent(u.replace(/^https?:\/\/[^/]+/, "")) || u; } catch { return u; }
@@ -88,13 +89,15 @@ export default function StructureDecisionsList({ cid, rows, titleOf }: { cid: nu
                       </div>
                     )}
                     {newPageKws.length > 0 && <div><b>עמוד חדש{d.new_page_title ? `: ${d.new_page_title}` : ""}</b> ({newPageKws.join(", ")})</div>}
+                    {d.hub && <div><b>עמוד אב במפת האתר:</b> {d.hub}</div>}
                     {d.explanation && <div className={isOpen ? "" : "line-clamp-2"}><b>למה:</b> {d.explanation}</div>}
                     {d.note && <div><b>הערת צוות:</b> {d.note}</div>}
                   </div>
 
                   {isOpen && (
                     <div className="mt-3 space-y-3">
-                      {d.extra_steps && <div className="text-sm text-slate-700"><b>צעדים נוספים:</b> {d.extra_steps}</div>}
+                      <Considerations c={d.considerations} />
+                      {d.extra_steps && <div className="bg-white rounded-lg border border-slate-200 p-3"><div className="text-sm font-semibold text-slate-800 mb-1">צעדים נוספים</div><Md text={d.extra_steps} /></div>}
                       {otherPages.length > 0 && (
                         <div className="text-xs text-slate-700 flex flex-wrap gap-1.5 items-center"><b>עמודים נוספים שמעורבים:</b>
                           {otherPages.map((u) => <a key={u} href={u} target="_blank" rel="noreferrer" className="text-brand-700 hover:underline inline-flex items-center gap-0.5"><ExternalLink size={10} /> {label(u)}</a>)}

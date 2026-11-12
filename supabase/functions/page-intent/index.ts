@@ -42,9 +42,17 @@ Deno.serve(async (req) => {
     }
 
     if (action === "page") {
-      // Fetch the live page.
-      let pageText = ""; let title = ""; let metaDesc = ""; let fetched = false;
-      try {
+      // Prefer the text saved by "סרוק את כל דפי האתר"; fall back to reading the live page.
+      let pageText = ""; let title = ""; let metaDesc = ""; let fetched = false; let source = "";
+      const bare = String(page_url || "").replace(/\/+$/, "");
+      const { data: stored } = await sb.from("pages").select("title, meta_description, content_text, text_scanned_at")
+        .eq("client_id", client_id).in("url", [bare, `${bare}/`]).not("content_text", "is", null).limit(1).maybeSingle();
+      if (stored?.content_text && stored.content_text.length > 50) {
+        title = stored.title || ""; metaDesc = stored.meta_description || "";
+        pageText = String(stored.content_text).slice(0, 9000); fetched = true;
+        source = `סריקת דפי האתר מ-${new Date(stored.text_scanned_at).toLocaleDateString("he-IL")}`;
+      }
+      if (!fetched) try {
         const r = await fetch(page_url, { headers: { "User-Agent": UA }, redirect: "follow" });
         if (r.ok) {
           const html = await r.text();
@@ -55,6 +63,7 @@ Deno.serve(async (req) => {
             doc.querySelectorAll("script, style, noscript").forEach((el) => el.remove());
             pageText = (doc.body?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 9000);
             fetched = pageText.length > 50;
+            if (fetched) source = "קריאה ישירה מהאתר (העמוד לא נמצא בסריקה השמורה)";
           }
         }
       } catch { /* page may not exist yet */ }
@@ -77,7 +86,7 @@ Deno.serve(async (req) => {
         page_analysis: String(parsed.page_analysis || "").trim(),
         conclusions: String(parsed.conclusions || "").trim(),
         quality_score: Number.isFinite(score) && score >= 1 && score <= 10 ? Math.round(score) : null,
-        title, meta_description: metaDesc, fetched,
+        title, meta_description: metaDesc, fetched, source,
       });
     }
 

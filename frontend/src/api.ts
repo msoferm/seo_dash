@@ -907,7 +907,7 @@ export async function savePageIntent(clientId: number, pageUrl: string, body: Pa
   );
   if (error) throw error;
 }
-export interface IntentAnalysisResult { intent_analysis?: string; page_analysis?: string; conclusions?: string; quality_score?: number | null; title?: string; meta_description?: string; fetched?: boolean; answer?: string }
+export interface IntentAnalysisResult { intent_analysis?: string; page_analysis?: string; conclusions?: string; quality_score?: number | null; title?: string; meta_description?: string; fetched?: boolean; source?: string; answer?: string }
 export async function analyzePageIntent(clientId: number, params: {
   page_url: string; action: "intent" | "page" | "consult";
   primary_keywords?: string[]; secondary_keywords?: string[];
@@ -1794,7 +1794,7 @@ export async function clearKwWritten(clientId: number, keyword: string): Promise
 
 // --- AI consultant on the structure tab ("ביטויי יעד ועמודי יעד") ---
 export interface StructureChatMsg { role: "user" | "assistant"; content: string }
-export async function structureChat(clientId: number, from: string, to: string, messages: StructureChatMsg[]): Promise<{ reply: string; stats: { keywords: number; pages: number } }> {
+export async function structureChat(clientId: number, from: string, to: string, messages: StructureChatMsg[]): Promise<{ reply: string; proposed?: string[]; stats: { keywords: number; pages: number } }> {
   return await invokeFn("structure-chat", { client_id: clientId, from, to, messages });
 }
 
@@ -1805,14 +1805,36 @@ export interface StructureRec {
   key: string; type: StructureRecType; title: string; explanation: string; extra_steps: string; new_page_title: string;
   priority: "high" | "medium" | "low"; keywords: string[]; pages: string[]; actions: StructureAction[];
   intent_analysis?: string;
+  hub?: string;
+  considerations?: StructureConsiderations;
+}
+export interface StructureConsiderations {
+  facts: string[]; intent: string; options: { option: string; pros: string; cons: string; chosen: boolean }[]; risks: string; why: string;
+}
+export interface StructureCluster { id: string; name: string; intent: string; stage: string; keywords: string[] }
+export interface StructureHub {
+  id: string; name: string; page_url: string | null; new_title: string; clusters: string[]; why: string;
+  children: { name: string; page_url: string | null; new_title: string; clusters: string[]; why: string }[];
+  alternatives: { option: string; pros: string; cons: string; recommended: boolean }[];
+}
+export interface StructureAnalysis {
+  recs: StructureRec[]; date_from: string; date_to: string; created_at: string; stage: string | null;
+  map: { clusters: StructureCluster[]; total: number; mapped: number; missing: number; scan_date: string | null } | null;
+  hierarchy: { hubs: StructureHub[]; notes: string } | null;
+  debug?: { diag: { part: string; error?: string; stop?: string; parsed?: number; sample?: string }[]; dropped: number } | null;
+}
+/** One stage of the combined analysis (map → hierarchy → recs per hub). */
+export async function runStructureStage(clientId: number, from: string, to: string, stage: "map" | "hierarchy" | "recs", hubId?: string): Promise<any> {
+  return await invokeFn("structure-chat", { client_id: clientId, from, to, action: "analyze", stage, hub_id: hubId });
 }
 export interface StructureDecision {
   id: number; client_id: number; rec_key: string | null; rec_type: StructureRecType | null; title: string; explanation: string | null;
   keywords: string[]; pages: string[]; actions: StructureAction[]; accept_mode: "full" | "partial" | "note"; note: string | null;
   color: number; prev_targets: any[]; task_ids: number[]; created_at: string;
   intent_analysis: string | null; extra_steps: string | null; new_page_title: string | null;
+  considerations: StructureConsiderations | null; hub: string | null;
 }
-export async function getStructureAnalysis(clientId: number): Promise<{ recs: StructureRec[]; date_from: string; date_to: string; created_at: string; debug?: { diag: { part: string; error?: string; stop?: string; parsed?: number; sample?: string }[]; dropped: number } | null } | null> {
+export async function getStructureAnalysis(clientId: number): Promise<StructureAnalysis | null> {
   const { data, error } = await supabase.from("structure_ai_analysis").select("*").eq("client_id", clientId).maybeSingle();
   if (error) throw error;
   return data;
@@ -1838,6 +1860,7 @@ export async function acceptStructureDecision(clientId: number, rec: StructureRe
     client_id: clientId, rec_key: rec.key, rec_type: rec.type, title: rec.title, explanation: rec.explanation,
     keywords: rec.keywords, pages: rec.pages, actions: p.actions, accept_mode: p.mode, note: p.note, color: p.color, prev_targets,
     intent_analysis: rec.intent_analysis || null, extra_steps: rec.extra_steps || null, new_page_title: rec.new_page_title || null,
+    considerations: rec.considerations || null, hub: rec.hub || null,
   }).select().single();
   if (e2) throw e2;
   for (const a of p.actions) {
@@ -1851,6 +1874,8 @@ export async function acceptStructureDecision(clientId: number, rec: StructureRe
   const lines = [
     rec.explanation ? `למה: ${rec.explanation}` : "",
     p.actions.length ? `שיוכים שבוצעו:\n${p.actions.map((a) => `• ${a.keyword} ← ${a.page_url ? pathOf(a.page_url) : (rec.new_page_title ? `עמוד חדש: ${rec.new_page_title}` : "עמוד חדש")}`).join("\n")}` : "",
+    rec.considerations?.why ? `למה בחרנו בדרך הזו: ${rec.considerations.why}` : "",
+    rec.considerations?.risks ? `סיכונים: ${rec.considerations.risks}` : "",
     rec.extra_steps ? `צעדים נוספים: ${rec.extra_steps}` : "",
     rec.intent_analysis ? `כוונת המשתמש (תקציר):
 ${rec.intent_analysis.slice(0, 1500)}` : "",
@@ -1895,4 +1920,19 @@ export async function structureRecIntent(clientId: number, rec: StructureRec, li
 export async function saveStructureRecs(clientId: number, recs: StructureRec[]): Promise<void> {
   const { error } = await supabase.from("structure_ai_analysis").update({ recs }).eq("client_id", clientId);
   if (error) throw error;
+}
+
+// --- Full site scan ("סרוק את כל דפי האתר") ---
+export interface SiteScan {
+  id: number; client_id: number; status: "running" | "done" | "failed"; method: string | null;
+  started_at: string; finished_at: string | null; pages_total: number; pages_ok: number; pages_failed: number;
+  pages: { url: string; title: string; words: number; ok: boolean; issue: string | null }[]; error: string | null;
+}
+export async function startSiteScan(clientId: number): Promise<{ scan_id: number }> {
+  return await invokeFn("site-scan", { client_id: clientId });
+}
+export async function getLatestSiteScan(clientId: number): Promise<SiteScan | null> {
+  const { data, error } = await supabase.from("site_scans").select("*").eq("client_id", clientId).order("started_at", { ascending: false }).limit(1).maybeSingle();
+  if (error) throw error;
+  return data as SiteScan | null;
 }

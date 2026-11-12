@@ -9,6 +9,8 @@ import DataSourceBanner from "../components/DataSourceBanner";
 import Spinner from "../components/Spinner";
 import { useFocusTarget } from "../components/useFocusTarget";
 import StructureDecisionsList from "../components/StructureDecisionsList";
+import { PageLinkContext, pathKey } from "../components/RichText";
+import { SiteScanNote } from "../components/SiteScanPanel";
 
 function fmt(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -37,6 +39,7 @@ function IntentCard({ cid, data, onSaved }: { cid: number; data: PageData; onSav
   const [pageText, setPageText] = useState(data.saved?.page_analysis || "");
   const [conclusions, setConclusions] = useState(data.saved?.conclusions || "");
   const [score, setScore] = useState<number | null>(data.saved?.quality_score ?? null);
+  const [pageSource, setPageSource] = useState("");
   const [consultQ, setConsultQ] = useState("");
   const [consultLog, setConsultLog] = useState<{ q: string; a: string }[]>([]);
 
@@ -49,6 +52,7 @@ function IntentCard({ cid, data, onSaved }: { cid: number; data: PageData; onSav
     mutationFn: () => api.analyzePageIntent(cid, { ...base, action: "page", intent_analysis: intentText }),
     onSuccess: (r) => {
       if (r.page_analysis) setPageText(r.page_analysis);
+      setPageSource(r.source || "");
       if (r.conclusions) setConclusions((c) => c ? c : r.conclusions!);
       if (r.quality_score != null) setScore(r.quality_score);
     },
@@ -137,7 +141,7 @@ function IntentCard({ cid, data, onSaved }: { cid: number; data: PageData; onSav
           )}
           {(pageText || runPage.isSuccess) && (
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">ניתוח הדף הקיים (ניתן לערוך)</label>
+              <label className="block text-xs font-medium text-slate-600 mb-1">ניתוח הדף הקיים (ניתן לערוך){pageSource && <span className="font-normal text-slate-400"> · מבוסס על {pageSource}</span>}</label>
               <textarea className="input text-sm w-full" rows={6} value={pageText} onChange={(e) => setPageText(e.target.value)} dir="rtl" />
             </div>
           )}
@@ -252,6 +256,7 @@ export default function UserIntentPage() {
           לכל עמוד: הביטויים העיקריים והמשניים, נתוני התנועה, וציון איכות לפי כוונת המשתמש. הפעל את הניתוח (כוונת המשתמש → ניתוח הדף),
           ערוך את המסקנות ושמור — הניתוח יישמר ויוזן לתכנית העבודה, להמלצות ולבלוג האוטומטי.
         </p>
+        <div className="mb-3"><SiteScanNote cid={cid} /></div>
         <div className="flex flex-wrap items-end gap-3">
           <div><label className="block text-xs text-slate-500 mb-1">מתאריך</label><input type="date" className="input" value={from} max={to} onChange={(e) => setFrom(e.target.value)} /></div>
           <div><label className="block text-xs text-slate-500 mb-1">עד תאריך</label><input type="date" className="input" value={to} min={from} onChange={(e) => setTo(e.target.value)} /></div>
@@ -266,7 +271,9 @@ export default function UserIntentPage() {
       </div>
 
       {/* Decisions accepted in the structure tab's AI analysis — decided here by user intent */}
-      <StructureDecisionsList cid={cid} rows={rows || []} titleOf={(u) => crawledMap.get(norm(u))?.title || null} />
+      <PageLinkContext.Provider value={{ base: client?.domain ? (/^https?:\/\//.test(client.domain) ? client.domain : `https://${client.domain}`) : "", titleOf: (p) => (crawled || []).find((c) => pathKey(c.url) === pathKey(p))?.title || null }}>
+        <StructureDecisionsList cid={cid} rows={rows || []} titleOf={(u) => crawledMap.get(norm(u))?.title || null} />
+      </PageLinkContext.Provider>
 
       {isLoading ? (
         <Spinner />

@@ -8,6 +8,7 @@ import {
 import * as api from "../api";
 import type { KwNoPageRow, KwNoPageRec, KwMatch } from "../api";
 import { expandFile, isSupported } from "../lib/fileImport";
+import UploadSummary, { type UploadResultRow } from "../components/UploadSummary";
 import PageHeader from "../components/PageHeader";
 import DataSourceBanner from "../components/DataSourceBanner";
 import Spinner from "../components/Spinner";
@@ -48,6 +49,7 @@ export default function KeywordsNoPagePage() {
   }, []);
 
   const [drag, setDrag] = useState(false);
+  const [upResults, setUpResults] = useState<UploadResultRow[] | null>(null);
   const [imp, setImp] = useState<{ total: number; done: number; keywords: number; sources: Set<string>; errors: string[]; skipped: string[] } | null>(null);
   const [q, setQ] = useState("");
   const [doneFilter, setDoneFilter] = useState<DoneFilter>("all");
@@ -80,12 +82,16 @@ export default function KeywordsNoPagePage() {
     }
     state.total = parsed.length;
     setImp({ ...state, sources: new Set(state.sources) });
+    const results: UploadResultRow[] = state.errors.map((f) => ({ file: f, error: "לא ניתן לקרוא את הקובץ" }));
+    setUpResults([...results]);
     for (const p of parsed) {
       try {
         const res = await api.uploadData(cid, p.name, p.text);
         if (res.source) state.sources.add(res.source);
         state.keywords += res.row_count || 0;
-      } catch { state.errors.push(p.name); }
+        results.push({ file: p.name, source: res.source, data_type: res.data_type, row_count: res.row_count, date_from: res.date_from, date_to: res.date_to });
+      } catch (e) { state.errors.push(p.name); results.push({ file: p.name, error: (e as Error).message?.slice(0, 120) }); }
+      setUpResults([...results]);
       state.done += 1;
       setImp({ ...state, sources: new Set(state.sources) });
     }
@@ -162,6 +168,8 @@ export default function KeywordsNoPagePage() {
     <div>
       <PageHeader title="מילים ללא עמוד" subtitle={client ? `${client.name} · זיהוי ביטויים שאין להם עמוד ייעודי באתר` : "מילים ללא עמוד"} />
       <DataSourceBanner cid={cid} match={["Search Console", "ZEFO"]} />
+      {/* After an upload: how much data arrived, by source and data type */}
+      {upResults && imp && <UploadSummary results={upResults} running={{ done: imp.done, total: imp.total }} skipped={imp.skipped} onClose={() => setUpResults(null)} />}
 
       {/* Upload */}
       <div
@@ -189,15 +197,7 @@ export default function KeywordsNoPagePage() {
             {busy ? (
               <span className="text-slate-600">מייבא {imp.done}/{imp.total} קבצים…</span>
             ) : (
-              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-emerald-800">
-                <div className="flex items-center gap-2 font-medium"><Check size={16} /> הייבוא הושלם</div>
-                <div className="text-xs text-emerald-700 mt-1">
-                  {imp.done - imp.errors.length}/{imp.total} קבצים נקלטו · {imp.keywords.toLocaleString()} שורות מילות מפתח
-                  {imp.sources.size ? ` · מקורות: ${[...imp.sources].join(", ")}` : ""}
-                </div>
-                {imp.errors.length > 0 && <div className="text-xs text-rose-600 mt-1">נכשלו: {imp.errors.join(", ")}</div>}
-                {imp.skipped.length > 0 && <div className="text-xs text-amber-600 mt-1">דולגו (פורמט לא נתמך): {imp.skipped.join(", ")}</div>}
-              </div>
+              <span className="text-emerald-700">הייבוא הושלם. הסיכום מופיע בראש העמוד.</span>
             )}
           </div>
         )}

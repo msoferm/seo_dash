@@ -8,7 +8,7 @@ import type { KwPageRow, KeywordTarget } from "../api";
 import PageHeader from "../components/PageHeader";
 import DataSourceBanner from "../components/DataSourceBanner";
 import Spinner from "../components/Spinner";
-import StructureChat from "../components/StructureChat";
+import { PageLinkContext, pathKey } from "../components/RichText";
 import StructureAiPlan, { type Selection } from "../components/StructureAiPlan";
 import { decisionColor, SELECTED_COLOR } from "../lib/decisionColors";
 
@@ -257,6 +257,11 @@ export default function StructureKeywordsPage() {
     return [...m.entries()].map(([k, v]) => ({ key: k, url: v.url, count: v.count, label: titles.get(k) || decodePath(v.url) }))
       .sort((a, b) => b.count - a.count);
   }, [byTerm, crawled]);
+  const pageLinks = useMemo(() => {
+    const t = new Map<string, string>();
+    for (const c of crawled || []) if (c.title) t.set(pathKey(c.url), c.title);
+    return { base: client?.domain ? (/^https?:\/\//.test(client.domain) ? client.domain : `https://${client.domain}`) : "", titleOf: (path: string) => t.get(pathKey(path)) || null };
+  }, [crawled, client]);
   const filterUrl = (url: string) => { setUrlFilter(norm(url)); setFilterMode(simQ.trim() ? "both" : "url"); };
   const kwActive = filterMode !== "url" && !!simQ.trim();
   const urlActive = filterMode !== "kw" && !!urlFilter;
@@ -401,14 +406,13 @@ export default function StructureKeywordsPage() {
       <PageHeader title="ביטויי יעד ועמודי יעד" subtitle={client ? `${client.name} · הגדרת עמוד היעד לכל ביטוי` : "ביטויי יעד ועמודי יעד"} />
       <DataSourceBanner cid={cid} match={["Search Console"]} />
 
-      {/* AI consultant: knows all keywords, pages, cannibalization, targets and user-intent analyses */}
-      <StructureChat cid={cid} from={from} to={to} />
-
-      {/* Combined AI analysis → recommendations → accepted decisions (colored in the table below) */}
+      {/* One AI tool: combined analysis (site map + recommendations) and chat, in sync. Page paths in AI text link to the page by title. */}
+      <PageLinkContext.Provider value={pageLinks}>
       <StructureAiPlan cid={cid} from={from} to={to} decisions={decisions || []} selection={selection} onSelect={setSelection}
         pageOptions={urlOptions.map((o) => ({ url: o.url, label: o.label }))}
         kwLines={(kws) => kws.map((k) => { const ps = fullByTerm.get(k) || []; return `${k} | ${ps.reduce((n, r) => n + r.impressions, 0)} חשיפות | ${ps.slice(0, 5).map((r) => `${decodePath(r.page)} (מ' ${r.position}, ${r.impressions})`).join("; ") || "אין דירוג"}`; })}
         renderCards={(kws) => kws.map((k) => renderCard({ term: k, pgs: fullByTerm.get(k) || [], written: writtenByTerm.get(k) || [] }, true))} />
+      </PageLinkContext.Provider>
 
       {/* #6: new written pages that still need a target-page decision */}
       {newPages.length > 0 && (
