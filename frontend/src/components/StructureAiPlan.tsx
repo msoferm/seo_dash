@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
+import { Md } from "./StructureChat";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Sparkles, Loader2, ChevronDown, ChevronUp, Check, PencilLine, StickyNote, Undo2, Eye, EyeOff, ExternalLink, CheckCircle2 } from "lucide-react";
+import { Sparkles, Loader2, ChevronDown, ChevronUp, Check, PencilLine, StickyNote, Eye, EyeOff, ExternalLink, CheckCircle2 } from "lucide-react";
 import * as api from "../api";
 import type { StructureAction, StructureDecision, StructureRec } from "../api";
 import { decisionColor, SELECTED_COLOR, REC_TYPE_LABEL } from "../lib/decisionColors";
@@ -9,38 +11,59 @@ function decodePath(u: string): string {
   try { return decodeURIComponent(u.replace(/^https?:\/\/[^/]+/, "")) || u; } catch { return u; }
 }
 const PRI: Record<string, string> = { high: "עדיפות גבוהה", medium: "עדיפות בינונית", low: "עדיפות נמוכה" };
-const TYPE_ORDER = ["same_intent", "cannibalization", "unassigned", "new_page"] as const;
+const TYPE_ORDER = ["site_strategy", "same_intent", "cannibalization", "relocate", "unassigned", "new_page"] as const;
 
 export type Selection = { key: string; keywords: string[] } | null;
 
 /** The "ניתוח AI כולל" panel: run the combined analysis, review each recommendation with its
- *  keywords/pages shown together, accept it (fully / partially / with a note), or undo a decision. */
-export default function StructureAiPlan({ cid, from, to, decisions, selection, onSelect, renderCards, pageOptions }: {
+ *  keywords/pages shown together, accept it (fully / partially / with a note). Accepted decisions are listed in the user-intent tab. */
+export default function StructureAiPlan({ cid, from, to, decisions, selection, onSelect, renderCards, pageOptions, kwLines }: {
   cid: number; from: string; to: string;
   decisions: StructureDecision[];
   selection: Selection;
   onSelect: (s: Selection) => void;
   renderCards: (keywords: string[]) => ReactNode;
   pageOptions: { url: string; label: string }[];
+  kwLines: (keywords: string[]) => string[];
 }) {
   const qc = useQueryClient();
   const { data: analysis } = useQuery({ queryKey: ["structure-analysis", cid], queryFn: () => api.getStructureAnalysis(cid), enabled: !!cid });
+  // Step 2: a detailed user-intent analysis per recommendation (3 at a time), saved with the recs.
+  const [intentProg, setIntentProg] = useState<{ done: number; total: number } | null>(null);
+  const fillIntents = async (all: StructureRec[]) => {
+    const todo = all.filter((r) => !r.intent_analysis && r.keywords.length > 0);
+    if (!todo.length) return;
+    const out = new Map<string, string>();
+    setIntentProg({ done: 0, total: todo.length });
+    let next = 0, done = 0;
+    const worker = async () => {
+      while (next < todo.length) {
+        const r = todo[next++];
+        try { out.set(r.key, (await api.structureRecIntent(cid, r, kwLines(r.keywords))).intent_analysis); } catch { /* left empty — can be retried */ }
+        setIntentProg({ done: ++done, total: todo.length });
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    const merged = all.map((r) => out.has(r.key) ? { ...r, intent_analysis: out.get(r.key) } : r);
+    await api.saveStructureRecs(cid, merged);
+    setIntentProg(null);
+    qc.invalidateQueries({ queryKey: ["structure-analysis", cid] });
+  };
   const run = useMutation({
     mutationFn: () => api.runStructureAnalysis(cid, from, to),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["structure-analysis", cid] }),
+    onSuccess: async (r) => { await qc.invalidateQueries({ queryKey: ["structure-analysis", cid] }); await fillIntents(r.recs || []); },
   });
+  const missingIntent = (analysis?.recs || []).filter((r) => !r.intent_analysis && r.keywords.length > 0).length;
   const refreshAll = () => {
     qc.invalidateQueries({ queryKey: ["structure-decisions", cid] });
     qc.invalidateQueries({ queryKey: ["kw-targets", cid] });
   };
-  const [decOpen, setDecOpen] = useState<Record<number, boolean>>({}); // decisions start collapsed
   const [listOpen, setListOpen] = useState(true);
 
   const acceptedKeys = new Set(decisions.map((d) => d.rec_key));
   const recs = (analysis?.recs || []).filter((r) => !acceptedKeys.has(r.key));
   const nextColor = decisions.length ? Math.max(...decisions.map((d) => d.color)) + 1 : 0;
 
-  const undo = useMutation({ mutationFn: (d: StructureDecision) => api.undoStructureDecision(d), onSuccess: () => { refreshAll(); onSelect(null); } });
 
   const toggleSel = (key: string, keywords: string[]) => onSelect(selection?.key === key ? null : { key, keywords });
 
@@ -64,51 +87,18 @@ export default function StructureAiPlan({ cid, from, to, decisions, selection, o
             ה-AI מנתח יחד את כל מילות המפתח, העמודים המדורגים, הקניבליזציה, החלטות היעד וניתוחי כוונת המשתמש, וממליץ: אילו מילים לאחד לעמוד אחד, איך לפתור קניבליזציה, לאיזה עמוד לשייך מילים שעוד לא שויכו, ואילו מילים דורשות עמוד חדש.
             החלטות שכבר אישרת נשמרות, וניתוח חוזר לא ממליץ עליהן שוב.
           </p>
-          {run.isPending && <div className="mt-3 text-sm text-slate-500 flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> מנתח את כל הנתונים… (כ-1–2 דקות)</div>}
+          {run.isPending && <div className="mt-3 text-sm text-slate-500 flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> שלב 1: מנתח את כל הנתונים… (כ-2 דקות)</div>}
+          {intentProg && <div className="mt-3 text-sm text-slate-500 flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> שלב 2: כותב כוונת משתמש מפורטת לכל המלצה… {intentProg.done}/{intentProg.total}</div>}
+          {!run.isPending && !intentProg && missingIntent > 0 && (
+            <button className="mt-3 btn-secondary text-xs" onClick={() => fillIntents(analysis?.recs || [])}><Sparkles size={13} /> השלם כוונת משתמש ל-{missingIntent} המלצות</button>
+          )}
           {run.isError && <div className="mt-3 text-sm text-rose-600">שגיאה: {(run.error as Error).message}</div>}
 
-          {/* Accepted decisions — each in its own color, collapsed by default, details always visible */}
+          {/* Accepted decisions live in the user-intent tab; here a summary + link (colors stay in the table) */}
           {decisions.length > 0 && (
-            <div className="mt-4">
-              <h4 className="text-sm font-semibold text-slate-700 mb-2 flex items-center gap-1.5"><CheckCircle2 size={15} className="text-emerald-600" /> החלטות שאושרו ({decisions.length})</h4>
-              <div className="space-y-2">
-                {decisions.map((d) => {
-                  const c = decisionColor(d.color);
-                  const open = !!decOpen[d.id];
-                  const showing = selection?.key === `d-${d.id}`;
-                  return (
-                    <div key={d.id} data-focus={`decision-${d.id}`} className="rounded-lg p-3 border" style={{ background: c.bg, borderColor: c.border, borderRightWidth: 5 }}>
-                      <div className="flex items-start justify-between gap-2">
-                        <button className="flex items-start gap-1.5 text-right min-w-0" onClick={() => setDecOpen((o) => ({ ...o, [d.id]: !open }))}>
-                          {open ? <ChevronUp size={16} className="mt-0.5 shrink-0" style={{ color: c.text }} /> : <ChevronDown size={16} className="mt-0.5 shrink-0" style={{ color: c.text }} />}
-                          <span>
-                            <span className="font-medium" style={{ color: c.text }}>{d.title}</span>
-                            <span className="text-xs text-slate-500 mr-2">{REC_TYPE_LABEL[d.rec_type || ""] || ""} · {d.keywords.length} מילים · {d.accept_mode === "full" ? "התקבלה במלואה" : d.accept_mode === "partial" ? "התקבלה חלקית" : "התקבלה עם הערה"} · {new Date(d.created_at).toLocaleDateString("he-IL")}</span>
-                          </span>
-                        </button>
-                        <button className="text-xs text-slate-500 hover:text-rose-600 inline-flex items-center gap-1 shrink-0" disabled={undo.isPending}
-                          onClick={() => { if (confirm(`לבטל את ההחלטה "${d.title}"?\n\nשיוכי עמוד היעד יחזרו למצב שלפני ההחלטה, והמשימה הפתוחה שנוצרה לה תימחק.`)) undo.mutate(d); }}>
-                          <Undo2 size={12} /> בטל החלטה
-                        </button>
-                      </div>
-                      {/* Details + why are shown both collapsed and open */}
-                      <div className="text-xs text-slate-700 mt-1.5 space-y-1">
-                        {d.explanation && <div className={open ? "" : "line-clamp-2"}><b>למה:</b> {d.explanation}</div>}
-                        {d.note && <div><b>הערת צוות:</b> {d.note}</div>}
-                      </div>
-                      {open && (
-                        <div className="mt-2 space-y-2">
-                          <ActionList actions={d.actions} />
-                          <button className="text-xs inline-flex items-center gap-1 hover:underline" style={{ color: c.text }} onClick={() => toggleSel(`d-${d.id}`, d.keywords)}>
-                            {showing ? <EyeOff size={12} /> : <Eye size={12} />} {showing ? "הסתר את המילים והעמודים" : `הצג את המילים והעמודים (${d.keywords.length})`}
-                          </button>
-                          {showing && <div className="space-y-3 bg-white/70 rounded-lg p-2">{renderCards(d.keywords)}</div>}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+            <div className="mt-3 text-sm bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-emerald-800 inline-flex items-center gap-1.5"><CheckCircle2 size={15} /> {decisions.length} החלטות אושרו. הן צבועות בטבלה למטה, והרשימה המלאה עם ההסברים וכפתור הביטול נמצאת בלשונית כוונת המשתמש.</span>
+              <Link to={`/clients/${cid}/user-intent`} className="text-xs text-emerald-700 font-medium hover:underline">לרשימת ההחלטות ←</Link>
             </div>
           )}
 
@@ -196,6 +186,12 @@ function RecCard({ rec, selected, onToggle, renderCards, pageOptions, onAccept }
       <div className="text-sm text-slate-700 mt-1 whitespace-pre-wrap"><b>למה:</b> {rec.explanation}</div>
       {rec.extra_steps && <div className="text-sm text-slate-700 mt-1 whitespace-pre-wrap"><b>צעדים נוספים:</b> {rec.extra_steps}</div>}
       {rec.new_page_title && <div className="text-sm text-violet-700 mt-1"><b>כותרת מוצעת לעמוד החדש:</b> {rec.new_page_title}</div>}
+      {rec.intent_analysis && (
+        <details className="mt-2 bg-white border border-slate-200 rounded-lg p-2" open={selected}>
+          <summary className="cursor-pointer text-sm font-medium text-brand-700">כוונת המשתמש של הקבוצה (מפורט)</summary>
+          <div className="mt-2"><Md text={rec.intent_analysis} /></div>
+        </details>
+      )}
       <div className="mt-2"><ActionList actions={rec.actions} /></div>
       <button className="mt-2 text-sm font-medium inline-flex items-center gap-1 text-amber-700 hover:underline" onClick={onToggle}>
         {selected ? <EyeOff size={14} /> : <Eye size={14} />} {selected ? "הסתר את המילים והעמודים" : `הצג את המילים והעמודים של ההמלצה (${rec.keywords.length})`}

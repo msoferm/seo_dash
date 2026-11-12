@@ -18,7 +18,7 @@ function inline(text: string): ReactNode {
 }
 
 /** Minimal markdown: headings, bullet/numbered lists, tables, bold. */
-function Md({ text }: { text: string }) {
+export function Md({ text }: { text: string }) {
   const lines = text.split("\n");
   const out: ReactNode[] = [];
   for (let i = 0; i < lines.length; i++) {

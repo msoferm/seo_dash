@@ -16,6 +16,8 @@ export const SELECTED_COLOR = { bg: "#fffbeb", border: "#f59e0b", text: "#92400e
 export const REC_TYPE_LABEL: Record<string, string> = {
   same_intent: "אותה כוונת משתמש",
   cannibalization: "קניבליזציה",
+  relocate: "מילים מדורגות שמתאימות יותר לעמוד אחר",
   unassigned: "שיוך מילים לעמוד",
   new_page: "דורש עמוד חדש",
+  site_strategy: "אסטרטגיה ומבנה היררכי של האתר",
 };

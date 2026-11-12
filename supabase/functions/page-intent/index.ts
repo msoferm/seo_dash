@@ -6,28 +6,16 @@
  *                      { page_analysis, conclusions, quality_score, title, meta_description }.
  *   action "consult" → free-form Q&A about the analysis. Returns { answer }.
  * This function only generates text; the frontend persists results to page_intent.
- * rev: 2026-11-03a
+ * rev: 2026-11-12a
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
 import { callClaude, DEFAULT_MODEL, textOf, extractJson } from "../_shared/anthropic.ts";
+import { FRAMEWORK } from "../_shared/intent_framework.ts";
 import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.46/deno-dom-wasm.ts";
 
 const UA = "SEO-Dashboard/1.0";
 
-const FRAMEWORK =
-  "אפיין את כוונת החיפוש לפי השאלות הבאות וענה על כל אחת בקצרה וברור:\n" +
-  "1. מי הגולש? (לקוח פרטי/עסקי, מתחיל/בעל ידע, מה המצב שהוביל אותו לחפש)\n" +
-  "2. מה הוא מנסה להשיג? (ללמוד / לפתור בעיה / להשוות / לבדוק מחיר / לרכוש)\n" +
-  "3. מה הוא מצפה למצוא בדף? (תשובה קצרה / מדריך / טבלת מחירים / דוגמאות / מוצר / קביעת פגישה)\n" +
-  "4. באיזה שלב הוא נמצא? (מזהה צורך / בוחן פתרונות / מחפש ספק)\n" +
-  "5. מה הוא כבר יודע? (מושגים שאפשר להניח מול מה שצריך להסביר)\n" +
-  "6. מה התשובה שחשוב לתת מיד בתחילת הדף?\n" +
-  "7. מה משפיע על ההחלטה שלו? (מחיר / זמן / התאמה / ניסיון / מיקום / תנאי שירות)\n" +
-  "8. מה החששות והחסמים שלו?\n" +
-  "9. אילו הוכחות הוא צריך? (עבודות קודמות / ביקורות / הסמכות / נתונים / הסבר התהליך)\n" +
-  "10. מה השאלה הבאה שתעלה לו אחרי התשובה הראשונית?\n" +
-  "11. מה הצעד הבא המתאים? (להמשיך לקרוא / להשוות / לבדוק התאמה / ליצור קשר / לקנות)";
 
 Deno.serve(async (req) => {
   const cors = handleCors(req);

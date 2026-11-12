@@ -1799,16 +1799,18 @@ export async function structureChat(clientId: number, from: string, to: string, 
 }
 
 // --- Structure tab: combined AI analysis + accepted decisions ---
-export type StructureRecType = "same_intent" | "cannibalization" | "unassigned" | "new_page";
+export type StructureRecType = "same_intent" | "cannibalization" | "relocate" | "unassigned" | "new_page" | "site_strategy";
 export interface StructureAction { keyword: string; page_url: string | null; intent: "strengthen" | "new_page" }
 export interface StructureRec {
   key: string; type: StructureRecType; title: string; explanation: string; extra_steps: string; new_page_title: string;
   priority: "high" | "medium" | "low"; keywords: string[]; pages: string[]; actions: StructureAction[];
+  intent_analysis?: string;
 }
 export interface StructureDecision {
   id: number; client_id: number; rec_key: string | null; rec_type: StructureRecType | null; title: string; explanation: string | null;
   keywords: string[]; pages: string[]; actions: StructureAction[]; accept_mode: "full" | "partial" | "note"; note: string | null;
   color: number; prev_targets: any[]; task_ids: number[]; created_at: string;
+  intent_analysis: string | null; extra_steps: string | null; new_page_title: string | null;
 }
 export async function getStructureAnalysis(clientId: number): Promise<{ recs: StructureRec[]; date_from: string; date_to: string; created_at: string; debug?: { diag: { part: string; error?: string; stop?: string; parsed?: number; sample?: string }[]; dropped: number } | null } | null> {
   const { data, error } = await supabase.from("structure_ai_analysis").select("*").eq("client_id", clientId).maybeSingle();
@@ -1835,6 +1837,7 @@ export async function acceptStructureDecision(clientId: number, rec: StructureRe
   const { data: dec, error: e2 } = await supabase.from("structure_decisions").insert({
     client_id: clientId, rec_key: rec.key, rec_type: rec.type, title: rec.title, explanation: rec.explanation,
     keywords: rec.keywords, pages: rec.pages, actions: p.actions, accept_mode: p.mode, note: p.note, color: p.color, prev_targets,
+    intent_analysis: rec.intent_analysis || null, extra_steps: rec.extra_steps || null, new_page_title: rec.new_page_title || null,
   }).select().single();
   if (e2) throw e2;
   for (const a of p.actions) {
@@ -1849,6 +1852,8 @@ export async function acceptStructureDecision(clientId: number, rec: StructureRe
     rec.explanation ? `למה: ${rec.explanation}` : "",
     p.actions.length ? `שיוכים שבוצעו:\n${p.actions.map((a) => `• ${a.keyword} ← ${a.page_url ? pathOf(a.page_url) : (rec.new_page_title ? `עמוד חדש: ${rec.new_page_title}` : "עמוד חדש")}`).join("\n")}` : "",
     rec.extra_steps ? `צעדים נוספים: ${rec.extra_steps}` : "",
+    rec.intent_analysis ? `כוונת המשתמש (תקציר):
+${rec.intent_analysis.slice(0, 1500)}` : "",
     p.note ? `הערת צוות: ${p.note}` : "",
   ].filter(Boolean).join("\n\n");
   const newPage = p.actions.some((a) => a.intent === "new_page");
@@ -1880,5 +1885,14 @@ export async function undoStructureDecision(d: StructureDecision): Promise<void>
   }
   if (d.task_ids?.length) await supabase.from("tasks").delete().in("id", d.task_ids).neq("status", "done");
   const { error } = await supabase.from("structure_decisions").delete().eq("id", d.id);
+  if (error) throw error;
+}
+
+/** Detailed user intent for one recommendation's keyword group (lines = "keyword | impressions | pages"). */
+export async function structureRecIntent(clientId: number, rec: StructureRec, lines: string[]): Promise<{ intent_analysis: string }> {
+  return await invokeFn("structure-chat", { client_id: clientId, action: "rec_intent", rec: { title: rec.title, explanation: rec.explanation, keywords: rec.keywords }, lines });
+}
+export async function saveStructureRecs(clientId: number, recs: StructureRec[]): Promise<void> {
+  const { error } = await supabase.from("structure_ai_analysis").update({ recs }).eq("client_id", clientId);
   if (error) throw error;
 }

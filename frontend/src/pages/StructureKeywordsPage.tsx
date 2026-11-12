@@ -407,6 +407,7 @@ export default function StructureKeywordsPage() {
       {/* Combined AI analysis → recommendations → accepted decisions (colored in the table below) */}
       <StructureAiPlan cid={cid} from={from} to={to} decisions={decisions || []} selection={selection} onSelect={setSelection}
         pageOptions={urlOptions.map((o) => ({ url: o.url, label: o.label }))}
+        kwLines={(kws) => kws.map((k) => { const ps = fullByTerm.get(k) || []; return `${k} | ${ps.reduce((n, r) => n + r.impressions, 0)} חשיפות | ${ps.slice(0, 5).map((r) => `${decodePath(r.page)} (מ' ${r.position}, ${r.impressions})`).join("; ") || "אין דירוג"}`; })}
         renderCards={(kws) => kws.map((k) => renderCard({ term: k, pgs: fullByTerm.get(k) || [], written: writtenByTerm.get(k) || [] }, true))} />
 
       {/* #6: new written pages that still need a target-page decision */}

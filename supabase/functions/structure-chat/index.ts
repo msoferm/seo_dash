@@ -6,9 +6,10 @@
  * Stateless: the frontend keeps the conversation and sends it with each call. Read-only.
  * action "analyze" (no messages): one combined AI analysis in 4 parallel parts (same-intent groups,
  * cannibalization, unassigned keywords, new pages). Returns { recs } and saves them to structure_ai_analysis.
- * rev: 2026-11-11b
+ * rev: 2026-11-12a
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
+import { FRAMEWORK } from "../_shared/intent_framework.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
 import { callClaude, DEFAULT_MODEL, textOf, extractJson, type Message, type ToolDefinition } from "../_shared/anthropic.ts";
 
@@ -45,10 +46,23 @@ Deno.serve(async (req) => {
     const { client_id, from, to } = body;
     const analyze = body.action === "analyze";
     const convo: { role: string; content: string }[] = Array.isArray(body.messages) ? body.messages : [];
-    if (!client_id || !from || !to || (!analyze && convo.length === 0)) return errorResponse("חסר client_id / טווח תאריכים / הודעה", 400);
+    if (body.action !== "rec_intent" && (!client_id || !from || !to || (!analyze && convo.length === 0))) return errorResponse("חסר client_id / טווח תאריכים / הודעה", 400);
 
     const { data: client } = await sb.from("clients").select("name, domain, notes").eq("id", client_id).maybeSingle();
     if (!client) return errorResponse("לקוח לא נמצא", 404);
+
+    // Detailed user intent for one recommendation's keyword group (same framework as "כוונת המשתמש").
+    if (body.action === "rec_intent") {
+      const rec = body.rec || {};
+      const kws: string[] = (rec.keywords || []).slice(0, 40);
+      const lines: string[] = (body.lines || []).slice(0, 60);
+      const sys = "אתה אסטרטג SEO ותוכן בעברית. נתח לעומק את כוונת המשתמש מאחורי קבוצת מילות מפתח שהומלץ לטפל בה יחד. אם יש בקבוצה מילים עם כוונה שונה — ציין אותן במפורש והסבר את ההשלכה (אולי צריך לפצל). כתוב בעברית, עם כותרות קצרות לכל שאלה, בלי מלל מיותר. ציין עמודים לפי הנתיב שלהם.";
+      const msg = `עסק: ${client.name} (${client.domain}). ${client.notes ? `הערות: ${client.notes}` : ""}\n\nההמלצה: ${rec.title || ""}\nנימוק: ${rec.explanation || ""}\n\nמילות המפתח בקבוצה: ${kws.join(", ") || "—"}\n` +
+        (lines.length ? `\nנתוני חיפוש (מילה | חשיפות | עמודים מדורגים עם מיקום):\n${lines.join("\n")}\n` : "") +
+        `\n${FRAMEWORK}\n\nבסיום: סכם ב-2-3 משפטים "מי המשתמש ומה הוא צריך", ומה העמוד שמשרת את הקבוצה הזו חייב לכלול כדי לענות על הכוונה.`;
+      const resp = await callClaude({ model: DEFAULT_MODEL, max_tokens: 3000, system: sys, messages: [{ role: "user", content: msg }] });
+      return jsonResponse({ intent_analysis: textOf(resp).trim() });
+    }
 
     // ---- Load everything ----
     const rows: Row[] = [];
@@ -102,6 +116,7 @@ Deno.serve(async (req) => {
     for (const t of targets || []) if (t.page_url) idOf(t.page_url);
     for (const s of secondary || []) idOf(s.page_url);
     for (const p of intents || []) idOf(p.page_url);
+    for (const p of crawled || []) idOf(p.url); // indexed/crawled pages with no search data yet
 
     const targetLabel = (term: string) => {
       const t = targetByKw.get(term);
@@ -146,7 +161,7 @@ Deno.serve(async (req) => {
       `\n=== קניבליזציה: מילים שיותר מעמוד אחד מדורג עליהן (${cannibal.length}) ===`,
       ...cannibal.map((k) => kwLine(k, 8)),
       `\n=== החלטות ביטוי יעד → עמוד יעד (לשונית "ביטויי יעד ועמודי יעד") — ${targetLines.length} ===`, ...(targetLines.length ? targetLines : ["אין עדיין"]),
-      `\n=== ביטויי משנה לפי עמוד (לשונית "עמודי יעד וביטויי משנה") ===`, ...(secLines.length ? secLines : ["אין עדיין"]),
+      `\n=== ביטויי משנה שהוגדרו לעמודים ===`, ...(secLines.length ? secLines : ["אין עדיין"]),
       `\n=== ניתוחי כוונת משתמש שנשמרו (לשונית "כוונת המשתמש") ===`, ...(intentLines.length ? intentLines : ["אין עדיין"]),
       `\n=== החלטות מבנה שהצוות כבר אישר מניתוחי AI קודמים (אל תמליץ עליהן שוב) ===`, ...(decisionLines.length ? decisionLines : ["אין"]),
       `\n=== מילים שסומנו "נכתב" (לשונית "מילים ללא עמוד") ===`, ...(writtenLines.length ? writtenLines : ["אין"]),
@@ -156,7 +171,8 @@ Deno.serve(async (req) => {
       {
         type: "text" as const,
         text:
-          "אתה יועץ SEO בכיר בעברית המתמחה בארכיטקטורת אתר: שיוך מילות מפתח לעמודים, כוונת משתמש, קיבוץ מילים לעמוד אחד מול פיצול לעמודים נפרדים, ומניעת קניבליזציה. " +
+          "אתה יועץ SEO בכיר בעברית, ובו בזמן אסטרטג שיווקי ומומחה לארכיטקטורת אתר היררכית: שיוך מילות מפתח לעמודים, כוונת משתמש, קיבוץ מילים לעמוד אחד מול פיצול לעמודים נפרדים, מניעת קניבליזציה, עמודי עוגן ואשכולות, וקישוריות פנימית — במטרה למקסם חשיפות וכניסות מגוגל לטווח הארוך. " +
+          "חשוב אסטרטגית: מילה שכבר מדורגת היא נכס — שקול סיכון מול רווח לפני שמזיזים אותה; מילה בלי עמוד לא תמיד מצדיקה עמוד חדש — הכרע לפי כוונה, פוטנציאל וערך עסקי. " +
           "לרשותך תמונת מצב מלאה של נתוני הלקוח (למטה). התבסס עליה ועל הכלים — אל תמציא מספרים, עמודים או מילים. " +
           "למילים שלא מופיעות בתמונת המצב השתמש ב-search_keywords; לפרטים מלאים על עמוד (כולל ניתוח כוונה מלא) השתמש ב-get_page.\n" +
           "כללים לשיוך מילים לעמוד: מילים עם אותה כוונת משתמש (אותו צורך, אותו שלב במסע, אותה תשובה מצופה) — באותו עמוד; כוונה שונה (מידע מול רכישה, מוצר שונה, קהל שונה) — עמודים נפרדים. " +
@@ -206,15 +222,17 @@ Deno.serve(async (req) => {
       const PARTS: { type: string; ask: string }[] = [
         { type: "same_intent", ask: "מצא קבוצות של מילות מפתח עם אותה כוונת משתמש שכדאי לרכז באותו עמוד (קיים או חדש). לכל קבוצה: איזה עמוד צריך להיות עמוד היעד של כולן, ולמה הכוונה זהה. התמקד במילים בעלות חשיפות משמעותיות." },
         { type: "cannibalization", ask: "מצא את מקרי הקניבליזציה החשובים (כמה עמודים מתחרים על אותה מילה או אותה כוונה). לכל מקרה: איזה עמוד צריך לזכות (עמוד היעד) ולמה, ומה לעשות עם העמודים המתחרים (איחוד, הפניית 301, שינוי מיקוד, קישור פנימי לעמוד הזוכה)." },
-        { type: "unassigned", ask: "מצא מילים שעדיין אין להן החלטת יעד (אין 'יעד:' בשורה שלהן) וקבע לכל אחת לאיזה עמוד קיים הכי מתאים לשייך אותה, ולמה. קבץ להמלצה אחת מילים שמשויכות לאותו עמוד." },
-        { type: "new_page", ask: "מצא מילים שדורשות עמוד חדש נפרד כי הכוונה שלהן שונה מכל עמוד קיים באתר. קבץ להמלצה אחת מילים שצריכות להיכנס לאותו עמוד חדש, והצע כותרת לעמוד החדש." },
+        { type: "relocate", ask: "מצא מילות מפתח שכבר מדורגות (גם גבוה) על עמוד קיים, אבל לפי כוונת המשתמש מתאימות יותר לעמוד אחר באתר (קיים או חדש). שקול בזהירות את הסיכון מול הרווח: מילה במיקום 1-5 שמביאה קליקים — העבר רק אם הכוונה שונה בבירור והעמוד האחר יענה טוב יותר, והסבר איך לעשות זאת בלי לאבד את הדירוג (חיזוק העמוד החדש בתוכן, קישור פנימי מהעמוד הישן עם עוגן מתאים, הסרת המיקוד מהעמוד הישן בהדרגה, ומעקב). אם עדיף להשאיר — אל תמליץ על העברה." },
+        { type: "unassigned", ask: "מצא מילים שעדיין אין להן החלטת יעד (אין 'יעד:' בשורה שלהן) וקבע לכל אחת לאיזה עמוד קיים הכי מתאים לשייך אותה, ולמה. קבץ להמלצה אחת מילים שמשויכות לאותו עמוד. אם מילה לא שווה עמוד משלה (חשיפות נמוכות, כוונה זהה לעמוד קיים, ערך עסקי נמוך) — שייך אותה לעמוד הקיים המתאים ואמור זאת במפורש." },
+        { type: "new_page", ask: "מצא מילים (כולל כאלה שעדיין אין להן עמוד) שכדאי לכתוב להן עמוד ייעודי נפרד לטווח ארוך, כי הכוונה שלהן שונה מכל עמוד קיים ויש להן פוטנציאל (חשיפות, ערך עסקי, אשכול מילים שלם). לכל המלצה נמק למה עמוד נפרד עדיף על שיוך לעמוד קיים, היכן הוא ימוקם בהיררכיה (תחת איזה עמוד אב), והצע כותרת. קבץ להמלצה אחת מילים שנכנסות לאותו עמוד חדש." },
+        { type: "site_strategy", ask: "נתח את האתר כולו כמומחה SEO, שיווק ואסטרטגיה ומומחה למבנה אתר היררכי, והמלץ איך לסדר אותו כדי למקסם חשיפות וכניסות: עמודי עוגן (pillar) ואשכולות נושאים, עמודי אב ועמודי בן, עומק הקליקים, קישוריות פנימית בין העמודים, עמודים חלשים לאיחוד או לשיפור, ופערים בכיסוי הנושאים. כל המלצה צריכה להיות מעשית ומבוססת נתונים. keywords ו-actions יכולים להיות ריקים אם ההמלצה מבנית בלבד; ציין ב-pages את העמודים המעורבים." },
       ];
       const FORMAT =
         'החזר JSON תקין בלבד, בלי טקסט לפניו או אחריו, בפורמט: {"recs":[{"title":"<כותרת קצרה של ההמלצה>","explanation":"<למה — נימוק מבוסס נתונים: כוונה, חשיפות, מיקום, איזה עמוד חזק>","keywords":["<מילות המפתח המדויקות כפי שהן בנתונים>"],"pages":["<מזהי העמודים הרלוונטיים, למשל P3>"],' +
         '"actions":[{"keyword":"<מילה>","target":"<מזהה עמוד היעד, או new לעמוד חדש>"}],"extra_steps":"<צעדים נוספים, למשל מה לעשות עם עמוד מתחרה; ריק אם אין>","new_page_title":"<רק אם יש עמוד חדש>","priority":"high|medium|low"}]}. ' +
         "עד 6 המלצות, מהחשובה ביותר. explanation עד 3 משפטים. העתק כל מילת מפתח בדיוק כפי שהיא מופיעה בנתונים. השתמש רק במילים ובמזהי עמודים שקיימים בנתונים. בטקסט החופשי (title/explanation/extra_steps) כתוב נתיבי עמודים ולא מזהים.";
       // Keyword lookup tolerant to spacing/case differences in the model's output.
-      const kwKey = (k: string) => String(k || "").replace(/["'״׳]/g, "").replace(/s+/g, " ").trim().toLowerCase();
+      const kwKey = (k: string) => String(k || "").replace(/["'״׳]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
       const kwByKey = new Map<string, string>();
       for (const k of byKw.keys()) kwByKey.set(kwKey(k), k);
       const realKw = (k: unknown) => kwByKey.get(kwKey(String(k))) || null;
@@ -244,7 +262,8 @@ Deno.serve(async (req) => {
       };
       const diag: any[] = [];
       const results = await Promise.all(PARTS.map(async (p, idx) => {
-        await new Promise((r) => setTimeout(r, idx * 1500)); // stagger to soften rate limits
+        // Stagger: the first call writes the prompt cache, later ones mostly read it (and soften rate limits).
+        await new Promise((r) => setTimeout(r, idx === 0 ? 0 : 6000 + idx * 1500));
         try {
           const resp = await callWithRetry(`${p.ask}
 
@@ -269,7 +288,7 @@ ${FORMAT}`);
           extra_steps: unId(r.extra_steps || ""), new_page_title: r.new_page_title || "", priority: ["high", "medium", "low"].includes(r.priority) ? r.priority : "medium",
           keywords, pages, actions,
         };
-      }).filter((r) => { if (r.keywords.length > 0) return true; dropped++; return false; });
+      }).filter((r) => { if (r.keywords.length > 0 || r.type === "site_strategy") return true; dropped++; return false; });
       const failed = diag.filter((d) => d.error).map((d) => d.part);
       await sb.from("structure_ai_analysis").upsert({ client_id, recs, date_from: from, date_to: to, created_at: new Date().toISOString(), debug: { diag, dropped } });
       return jsonResponse({ recs, failed, diag, dropped });

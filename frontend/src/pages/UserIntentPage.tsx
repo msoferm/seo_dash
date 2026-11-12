@@ -8,6 +8,7 @@ import PageHeader from "../components/PageHeader";
 import DataSourceBanner from "../components/DataSourceBanner";
 import Spinner from "../components/Spinner";
 import { useFocusTarget } from "../components/useFocusTarget";
+import StructureDecisionsList from "../components/StructureDecisionsList";
 
 function fmt(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -264,12 +265,15 @@ export default function UserIntentPage() {
         </div>
       </div>
 
+      {/* Decisions accepted in the structure tab's AI analysis — decided here by user intent */}
+      <StructureDecisionsList cid={cid} rows={rows || []} titleOf={(u) => crawledMap.get(norm(u))?.title || null} />
+
       {isLoading ? (
         <Spinner />
       ) : pages.length === 0 ? (
         <div className="card text-center py-10 text-slate-500 text-sm">
           <Brain size={36} className="mx-auto mb-2 text-slate-300" />
-          {onlyDefined ? 'אין עדיין עמודים עם ביטויי יעד/משנה. הגדר אותם בלשוניות "ביטויי יעד" ו"עמודי יעד וביטויי משנה", או בטל את הסינון.' : "אין עמודים להצגה."}
+          {onlyDefined ? 'אין עדיין עמודים עם ביטויי יעד/משנה. הגדר אותם בלשונית "ביטויי יעד ועמודי יעד", או בטל את הסינון.' : "אין עמודים להצגה."}
         </div>
       ) : (
         <div className="space-y-3">
