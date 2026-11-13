@@ -63,9 +63,10 @@ function Sidebar() {
       <Link to="/" className={`text-xl font-bold text-brand-700 px-3 ${cid ? "" : "mb-4"}`}>דאשבורד SEO</Link>
       {/* The client you're working under, right below the title */}
       {cid && (
-        <Link to={base} className="mx-3 mb-4 mt-1 text-sm font-semibold text-slate-800 bg-brand-50 border border-brand-100 rounded-lg px-2.5 py-1.5 truncate hover:bg-brand-100" title={client?.domain || ""}>
-          {client ? client.name : "…"}
-          {client?.domain && <span className="block text-xs font-normal text-slate-500 truncate" dir="ltr">{client.domain}</span>}
+        <Link to={base} className="mx-1 mb-4 mt-2 bg-brand-600 text-white rounded-xl px-3 py-2.5 shadow-sm hover:bg-brand-700 block" title={client?.domain || ""}>
+          <span className="block text-[11px] font-medium text-brand-100">הלקוח הנוכחי</span>
+          <span className="block text-lg font-bold leading-snug break-words">{client ? client.name : "…"}</span>
+          {client?.domain && <span className="block text-xs text-brand-100 truncate mt-0.5" dir="ltr">{client.domain}</span>}
         </Link>
       )}
       <NavLink to="/" end className={({ isActive }) => `${navItem} ${isActive ? active : inactive}`}>

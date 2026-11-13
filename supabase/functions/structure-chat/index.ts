@@ -9,7 +9,11 @@
  *   recs (hub_id | "SITE") → recommendations with structured considerations. Saved in structure_ai_analysis.
  * action "rec_intent": detailed user intent for one recommendation's keyword group.
  * The chat sees the latest analysis and can add a recommendation to it (propose_recommendation).
- * rev: 2026-11-12b
+ * Keywords = GSC page↔query map (every keyword, no impressions floor) + keywords that exist only in
+ * uploaded files (no page data), minus keywords the team removed (excluded_keywords).
+ * Big hubs are analysed in parts ("H1.0", "H1.1" … CHILDREN_PER_PART children each) so every request
+ * stays well under the edge-function time limit.
+ * rev: 2026-11-13a
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { FRAMEWORK } from "../_shared/intent_framework.ts";
@@ -18,9 +22,10 @@ import { callClaude, DEFAULT_MODEL, textOf, extractJson, type Message, type Tool
 
 const MAX_KW_IN_SNAPSHOT = 700;   // keywords listed in the system prompt (by impressions)
 const MAX_PAGES_PER_KW = 5;
+const CHILDREN_PER_PART = 4;       // must match the UI (StructureAiPlan.unitIds)
 
 type Row = { page: string; term: string; clicks: number; impressions: number; ctr: number; position: number };
-interface KwAgg { term: string; impressions: number; clicks: number; best: number; pages: Row[] }
+interface KwAgg { term: string; impressions: number; clicks: number; best: number; pages: Row[]; file?: { impressions: number; position: number | null; files: string[] } }
 
 const norm = (u: string) => (u || "").replace(/\/+$/, "").toLowerCase();
 function decodePath(u: string): string {
@@ -94,7 +99,7 @@ Deno.serve(async (req) => {
     // ---- Load everything ----
     const rows: Row[] = [];
     for (let off = 0; off < 100000; off += 1000) {
-      const { data, error } = await sb.rpc("gsc_page_query_map", { p_client_id: client_id, p_from: from, p_to: to }).range(off, off + 999);
+      const { data, error } = await sb.rpc("gsc_page_query_map", { p_client_id: client_id, p_from: from, p_to: to, p_min_impr: 1 }).range(off, off + 999);
       if (error) throw error;
       for (const r of data || []) rows.push({ page: r.page, term: r.term, clicks: +r.clicks || 0, impressions: +r.impressions || 0, ctr: +r.ctr || 0, position: +r.position || 0 });
       if (!data || data.length < 1000) break;
@@ -106,6 +111,12 @@ Deno.serve(async (req) => {
       sb.from("pages").select("url, title, h1, meta_description, content_text, text_scanned_at").eq("client_id", client_id).not("last_full_crawl", "is", null),
       sb.from("kw_written").select("keyword, written_url").eq("client_id", client_id),
     ]);
+    const [{ data: excludedRows }, { data: fileKwRows }] = await Promise.all([
+      sb.from("excluded_keywords").select("keyword").eq("client_id", client_id),
+      sb.rpc("uploaded_keywords", { p_client_id: client_id }),
+    ]);
+    const excluded = new Set((excludedRows || []).map((e: any) => String(e.keyword).trim().toLowerCase()));
+    for (let i = rows.length - 1; i >= 0; i--) if (excluded.has(rows[i].term.trim().toLowerCase())) rows.splice(i, 1);
     const { data: decisions } = await sb.from("structure_decisions").select("title, keywords, note, rec_key").eq("client_id", client_id).order("created_at");
     const { data: analysisRow } = await sb.from("structure_ai_analysis").select("hierarchy, recs, created_at").eq("client_id", client_id).maybeSingle();
     const acceptedKeys = new Set((decisions || []).map((d: any) => d.rec_key));
@@ -138,6 +149,16 @@ Deno.serve(async (req) => {
       const pk = norm(r.page);
       byPage.set(pk, [...(byPage.get(pk) || []), r]);
     }
+    // Keywords from uploaded files: enrich known ones, add the ones with no page data at all.
+    const byLower = new Map([...byKw.values()].map((k) => [k.term.trim().toLowerCase(), k]));
+    for (const f of fileKwRows || []) {
+      const low = String(f.term || "").trim().toLowerCase();
+      if (!low || excluded.has(low)) continue;
+      const file = { impressions: +f.impressions || 0, position: f.position == null ? null : +f.position, files: f.files || [] };
+      const cur = byLower.get(low);
+      if (cur) cur.file = file;
+      else { const a: KwAgg = { term: String(f.term).trim(), impressions: file.impressions, clicks: +f.clicks || 0, best: file.position ?? 999, pages: [], file }; byKw.set(a.term, a); byLower.set(low, a); }
+    }
     const kws = [...byKw.values()].sort((a, b) => b.impressions - a.impressions);
     for (const k of kws) k.pages.sort((a, b) => b.impressions - a.impressions);
     // Register pages in order of total impressions so the busiest pages get the lowest ids.
@@ -158,7 +179,8 @@ Deno.serve(async (req) => {
     const kwLine = (k: KwAgg, maxPages = MAX_PAGES_PER_KW) => {
       const ps = k.pages.slice(0, maxPages).map((r) => `${idOf(r.page)}(מ${r.position},ח${r.impressions},ק${r.clicks})`).join(" ");
       const more = k.pages.length > maxPages ? ` +${k.pages.length - maxPages}` : "";
-      return `${k.term} | ח${k.impressions} ק${k.clicks} | ${ps}${more}${targetLabel(k.term)}`;
+      const fileNote = !k.pages.length && k.file ? `מקובץ שהועלה בלבד (מ${k.file.position ?? "?"}) — אין נתון על איזה עמוד מדורג` : "";
+      return `${k.term} | ח${k.impressions} ק${k.clicks} | ${ps || fileNote}${more}${targetLabel(k.term)}`;
     };
 
     // ---- Snapshot text ----
@@ -190,7 +212,7 @@ Deno.serve(async (req) => {
     const snapshot = [
       `=== עמודים (מזהה = נתיב | title | H1 | סה"כ חשיפות) — ${pageUrl.size} ===`, ...pageLines,
       `\n=== מילות מפתח מ-Search Console (${from} עד ${to}) — ${kws.length} סה"כ, מוצגות ${Math.min(kws.length, MAX_KW_IN_SNAPSHOT)} המובילות בחשיפות ===`,
-      `פורמט: מילה | ח=חשיפות ק=קליקים | עמודים מדורגים: מזהה(מ=מיקום ממוצע, ח, ק) | החלטת יעד`,
+      `פורמט: מילה | ח=חשיפות ק=קליקים | עמודים מדורגים: מזהה(מ=מיקום ממוצע, ח, ק) | החלטת יעד. מילים "מקובץ שהועלה בלבד" הגיעו מקובץ Search Console שהועלה (ללא פילוח לפי עמוד) — הנתונים שלהן מצטברים לתקופת הקובץ.`,
       ...kws.slice(0, MAX_KW_IN_SNAPSHOT).map((k) => kwLine(k)),
       `\n=== קניבליזציה: מילים שיותר מעמוד אחד מדורג עליהן (${cannibal.length}) ===`,
       ...cannibal.map((k) => kwLine(k, 8)),
@@ -399,31 +421,36 @@ Deno.serve(async (req) => {
       if (stage === "recs") {
         const hubs: any[] = cur?.hierarchy?.hubs || [];
         const hubId = String(body.hub_id || "");
-        const hub = hubs.find((h) => h.id === hubId);
+        const [baseId, partStr] = hubId.split(".");
+        const part = partStr == null ? null : Number(partStr);
+        const hub = hubs.find((h) => h.id === baseId);
         if (!hub && hubId !== "SITE") return errorResponse("עמוד אב לא נמצא", 400);
         const pageRef = (u: string | null, t: string) => (u ? idOf(u) : `עמוד חדש "${t}"`);
         let scope: string;
         if (hub) {
           const cl = (ids: string[]) => clusters.filter((c) => ids.includes(c.id));
+          const kids = part == null ? hub.children : hub.children.slice(part * CHILDREN_PER_PART, (part + 1) * CHILDREN_PER_PART);
+          const withHub = part == null || part === 0;
           scope =
             `עמוד אב: "${hub.name}" → ${pageRef(hub.page_url, hub.new_title)}. למה: ${hub.why}\n` +
-            `קבוצות של עמוד האב:\n${cl(hub.clusters).map(clusterText).join("\n")}\n` +
-            hub.children.map((c: any) => `עמוד בן: "${c.name}" → ${pageRef(c.page_url, c.new_title)}. למה: ${c.why}\n${cl(c.clusters).map(clusterText).join("\n")}`).join("\n") +
+            (withHub ? `קבוצות של עמוד האב:\n${cl(hub.clusters).map(clusterText).join("\n")}\n`
+              : `(חלק ${part! + 1} של עמוד האב: התמקד רק בעמודי הבן שלמטה ובקשר שלהם לעמוד האב. עמוד האב עצמו נותח בחלק אחר)\n`) +
+            kids.map((c: any) => `עמוד בן: "${c.name}" → ${pageRef(c.page_url, c.new_title)}. למה: ${c.why}\n${cl(c.clusters).map(clusterText).join("\n")}`).join("\n") +
             (hub.alternatives?.length ? `\nחלופות שנשקלו: ${hub.alternatives.map((a: any) => `${a.recommended ? "[מומלץ] " : ""}${a.option} (+ ${a.pros} / − ${a.cons})`).join(" | ")}` : "");
         } else {
           scope = `המלצות ברמת האתר כולו, על בסיס מפת האתר:\n${hubs.map((h) => `- ${h.name} → ${pageRef(h.page_url, h.new_title)}; בנים: ${h.children.map((c: any) => `${c.name} → ${pageRef(c.page_url, c.new_title)}`).join(", ") || "—"}`).join("\n")}\nהערות מבנה: ${cur?.hierarchy?.notes || "—"}\n` +
-            "התמקד במה שלא שייך לעמוד אב אחד: קישוריות פנימית בין עמודי האב והבנים, תפריט וניווט, עמודים חלשים/כפולים לאיחוד או להפניה, ועמודים שאינם במפה.";
+            "התמקד במה שלא שייך לעמוד אב אחד: קישוריות פנימית בין עמודי האב והבנים, תפריט וניווט, עמודים חלשים/כפולים לאיחוד או להפניה, ועמודים שאינם במפה. עד 6 המלצות, המשמעותיות ביותר.";
         }
         const ask =
           "שלב 3 — המלצות. השווה את המבנה המומלץ למצב הקיים (איזה עמוד מדורג היום על כל מילה, החלטות יעד קיימות, תוכן העמודים) והמלץ מה לעשות בפועל. " +
-          "כל מילה מופיעה בהמלצה אחת לכל היותר. אל תמליץ על מה שכבר מתקיים או שכבר אושר. " +
+          "כל מילה מופיעה בהמלצה אחת לכל היותר. אל תמליץ על מה שכבר מתקיים או שכבר אושר. היה תמציתי: עד 8 המלצות, ובכל שדה טקסט רק מה שחשוב להחלטה. " +
           "סוגים: same_intent (ריכוז מילים באותו עמוד), cannibalization (כמה עמודים מתחרים), relocate (מילה מדורגת שמתאימה יותר לעמוד אחר), unassigned (שיוך מילים בלי יעד), new_page (עמוד חדש), site_strategy (מבנה/קישוריות/איחוד).\n\n" +
           `${scope}\n\n` +
           'החזר JSON בלבד: {"recs":[{"type":"<אחד מהסוגים>","title":"<כותרת קצרה>","summary":"<משפט-שניים: מה עושים ולמה>",' +
           '"considerations":{"facts":["<עובדה מהנתונים עם מספרים: חשיפות, מיקום, איזה עמוד>"],"intent":"<מה כוונת המשתמש ולמה המילים שייכות יחד/לחוד>","options":[{"option":"<דרך פעולה>","pros":"<יתרונות>","cons":"<חסרונות>","chosen":true}],"risks":"<סיכונים ואיך לצמצם אותם>","why":"<למה בחרנו בדרך הזו>"},' +
           '"keywords":["<מילים מדויקות>"],"pages":["<מזהי עמודים>"],"actions":[{"keyword":"<מילה>","target":"<מזהה עמוד היעד או new>"}],"extra_steps":"<צעדים נוספים כרשימה במרקדאון>","new_page_title":"<אם יש עמוד חדש>","priority":"high|medium|low"}]}. ' +
           "בטקסט החופשי כתוב נתיבי עמודים (לא מזהים), השתמש ב-**הדגשה** ובשורות נפרדות כשיש כמה נקודות.";
-        const resp = await callWithRetry(ask, 10000);
+        const resp = await callWithRetry(ask, 7000);
         const stamp = Date.now().toString(36);
         const recs = parseObj(textOf(resp), "recs").map((r: any, i: number) => normalizeRec(r, `${hubId}-${stamp}-${i}`, hub ? hub.name : "ברמת האתר"))
           .filter((r: any) => r.keywords.length > 0 || r.type === "site_strategy");

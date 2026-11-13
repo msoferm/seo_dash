@@ -1,7 +1,8 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Network, Search, ExternalLink, AlertTriangle, Check, X, Loader2, Save, Target, FileText, Sparkles, StickyNote, ChevronDown, ChevronUp, FolderCheck, Undo2, Layers3, Filter } from "lucide-react";
+import { Network, Search, ExternalLink, AlertTriangle, Check, X, Loader2, Save, Target, FileText, Sparkles, StickyNote, ChevronDown, ChevronUp, FolderCheck, Undo2, Layers3, Filter, Trash2, RotateCcw, FileSpreadsheet, RefreshCw } from "lucide-react";
+import { Md } from "../components/RichText";
 import { useFocusTarget } from "../components/useFocusTarget";
 import * as api from "../api";
 import type { KwPageRow, KeywordTarget } from "../api";
@@ -148,8 +149,23 @@ export default function StructureKeywordsPage() {
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const { data: client } = useQuery({ queryKey: ["client", cid], queryFn: () => api.getClient(cid), enabled: !!cid });
-  const { data: rows, isLoading, refetch, isFetching } = useQuery({ queryKey: ["kw-map", cid, from, to], queryFn: () => api.getKeywordPageMap(cid, from, to), enabled: !!cid });
+  // Every keyword: no impressions floor (it used to hide keywords under 10 impressions).
+  const { data: rows, isLoading, refetch, isFetching } = useQuery({ queryKey: ["kw-map", cid, from, to], queryFn: () => api.getKeywordPageMap(cid, from, to, 1), enabled: !!cid });
   const { data: targets } = useQuery({ queryKey: ["kw-targets", cid], queryFn: () => api.listKeywordTargets(cid), enabled: !!cid });
+  // Keywords from every uploaded file (also ones with no page data), removed keywords, and "new" tracking.
+  const { data: fileKws } = useQuery({ queryKey: ["uploaded-kws", cid], queryFn: () => api.getUploadedKeywords(cid), enabled: !!cid });
+  const { data: excluded } = useQuery({ queryKey: ["excluded-kws", cid], queryFn: () => api.listExcludedKeywords(cid), enabled: !!cid });
+  const { data: seen } = useQuery({ queryKey: ["kw-seen", cid], queryFn: () => api.listSeenKeywords(cid), enabled: !!cid });
+  const [excludedOpen, setExcludedOpen] = useState(false);
+  const invalidateKwLists = () => { for (const k of ["excluded-kws", "kw-seen"]) qc.invalidateQueries({ queryKey: [k, cid] }); };
+  const exclude = useMutation({ mutationFn: (term: string) => api.excludeKeywords(cid, [term]), onSuccess: invalidateKwLists });
+  const restore = useMutation({ mutationFn: (id: number) => api.restoreExcludedKeyword(id), onSuccess: invalidateKwLists });
+  const ack = useMutation({ mutationFn: () => api.acknowledgeNewKeywords(cid), onSuccess: invalidateKwLists });
+  const excludedSet = useMemo(() => new Set((excluded || []).map((e) => e.keyword.trim().toLowerCase())), [excluded]);
+  const isExcluded = (t: string) => excludedSet.has(t.trim().toLowerCase());
+  const unackedSet = useMemo(() => new Set((seen || []).filter((s) => !s.acknowledged_at).map((s) => s.keyword)), [seen]);
+  const isNewKw = (t: string) => unackedSet.has(t.trim().toLowerCase());
+  const fileByLower = useMemo(() => new Map((fileKws || []).map((f) => [f.term.toLowerCase(), f])), [fileKws]);
   const { data: posts } = useQuery({ queryKey: ["blog-posts", cid], queryFn: () => api.listBlogPosts(cid), enabled: !!cid });
   const invalidateTargets = () => qc.invalidateQueries({ queryKey: ["kw-targets", cid] });
   const delTarget = useMutation({ mutationFn: (id: number) => api.deleteKeywordTarget(id), onSuccess: invalidateTargets });
@@ -227,14 +243,31 @@ export default function StructureKeywordsPage() {
     return bt;
   }, [rows]);
 
-  // Keyword rows = union of GSC terms and keywords that have a written page (so new pages always show).
+  // Keyword rows = union of GSC terms, keywords from uploaded files (even with no page data) and
+  // keywords that have a written page — minus the keywords the team removed.
+  const liveLower = useMemo(() => new Set([...fullByTerm.keys()].map((t) => t.trim().toLowerCase())), [fullByTerm]);
+  const fileOnly = useMemo(() => (fileKws || []).filter((f) => !liveLower.has(f.term.toLowerCase()) && !excludedSet.has(f.term.toLowerCase())), [fileKws, liveLower, excludedSet]);
+  const allTermCount = useMemo(() => {
+    const s = new Set<string>();
+    for (const t of fullByTerm.keys()) if (!excludedSet.has(t.trim().toLowerCase())) s.add(t.trim().toLowerCase());
+    for (const f of fileOnly) s.add(f.term.toLowerCase());
+    return s.size;
+  }, [fullByTerm, fileOnly, excludedSet]);
   const termEntries = useMemo(() => {
     const terms = new Set<string>([...byTerm.keys()]);
     for (const k of writtenByTerm.keys()) if (k) terms.add(k);
-    let list = [...terms].map((term) => ({ term, pgs: byTerm.get(term) || [], written: writtenByTerm.get(term) || [] }));
+    const pMax = posMax.trim() ? Number(posMax) : null;
+    const iMin = imprMin.trim() ? Number(imprMin) : null;
+    for (const f of fileOnly) {
+      if (pMax != null && !(f.position != null && f.position <= pMax)) continue;
+      if (iMin != null && !(f.impressions >= iMin)) continue;
+      terms.add(f.term);
+    }
+    let list = [...terms].filter((t) => !excludedSet.has(t.trim().toLowerCase()))
+      .map((term) => ({ term, pgs: byTerm.get(term) || [], written: writtenByTerm.get(term) || [], file: fileByLower.get(term.toLowerCase()) }));
     if (onlyCannibal) list = list.filter((e) => e.pgs.length >= 2);
     if (q.trim()) { const s = q.trim().toLowerCase(); list = list.filter((e) => e.term.toLowerCase().includes(s)); }
-    const impr = (e: { pgs: KwPageRow[] }) => e.pgs.reduce((s, r) => s + r.impressions, 0);
+    const impr = (e: { pgs: KwPageRow[]; file?: api.UploadedKeyword }) => e.pgs.length ? e.pgs.reduce((s, r) => s + r.impressions, 0) : (e.file?.impressions || 0);
     // Shared-URL filter: only keywords for which this URL also ranks in Google.
     if (filterMode !== "kw" && urlFilter) list = list.filter((e) => e.pgs.some((r) => norm(r.page) === urlFilter));
     if (filterMode !== "url" && simQ.trim()) {
@@ -242,7 +275,72 @@ export default function StructureKeywordsPage() {
       return scored.sort((a, b) => b.sc - a.sc || impr(b.e) - impr(a.e)).map((x) => x.e);
     }
     return list.sort((a, b) => impr(b) - impr(a));
-  }, [byTerm, writtenByTerm, onlyCannibal, q, simQ, urlFilter, filterMode]);
+  }, [byTerm, writtenByTerm, onlyCannibal, q, simQ, urlFilter, filterMode, fileOnly, excludedSet, fileByLower, posMax, imprMin]);
+
+  // Register keywords the tab has never seen (→ "new", light purple). First time for a client = baseline.
+  const registering = useRef(false);
+  useEffect(() => {
+    if (!rows || !fileKws || !seen || registering.current) return;
+    const seenSet = new Set(seen.map((s) => s.keyword));
+    const all = new Set([...liveLower, ...fileKws.map((f) => f.term.toLowerCase())]);
+    const missing = [...all].filter((k) => !seenSet.has(k));
+    if (!missing.length) return;
+    registering.current = true;
+    (async () => {
+      await api.registerSeenKeywords(cid, missing);
+      if (!seen.length) await api.acknowledgeNewKeywords(cid);
+      registering.current = false;
+      qc.invalidateQueries({ queryKey: ["kw-seen", cid] });
+    })().catch(() => { registering.current = false; });
+  }, [rows, fileKws, seen, liveLower, cid, qc]);
+  const newCount = useMemo(() => {
+    let n = 0;
+    for (const t of liveLower) if (unackedSet.has(t) && !excludedSet.has(t)) n++;
+    for (const f of fileOnly) if (unackedSet.has(f.term.toLowerCase())) n++;
+    return n;
+  }, [liveLower, fileOnly, unackedSet, excludedSet]);
+
+  // "עדכן" at the top: reload everything and report exactly what changed.
+  const [report, setReport] = useState<{ at: string; lines: string[]; newKws: string[] } | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const doRefresh = async () => {
+    setRefreshing(true);
+    try {
+      const termSet = (r: KwPageRow[] | undefined, f: api.UploadedKeyword[] | undefined, ex: { keyword: string }[] | undefined) => {
+        const exs = new Set((ex || []).map((e) => e.keyword.trim().toLowerCase()));
+        const s = new Map<string, string>();
+        for (const x of r || []) { const k = x.term.trim().toLowerCase(); if (!exs.has(k)) s.set(k, x.term); }
+        for (const x of f || []) { const k = x.term.toLowerCase(); if (!exs.has(k)) s.set(k, x.term); }
+        return s;
+      };
+      const before = termSet(rows, fileKws, excluded);
+      const dsBefore = new Set((qc.getQueryData<api.UploadedDataset[]>(["datasets", cid]) || []).map((d) => d.id));
+      const scanBefore = qc.getQueryData<api.SiteScan | null>(["site-scan", cid])?.id;
+      const pagesBefore = (crawled || []).length;
+      await Promise.all([
+        refetch(),
+        ...["uploaded-kws", "excluded-kws", "kw-seen", "kw-targets", "datasets", "site-scan", "crawled-pages", "structure-analysis", "structure-decisions", "blog-posts"].map((k) => qc.refetchQueries({ queryKey: [k, cid] })),
+      ]);
+      const after = termSet(qc.getQueryData(["kw-map", cid, from, to]), qc.getQueryData(["uploaded-kws", cid]), qc.getQueryData(["excluded-kws", cid]));
+      const added = [...after.entries()].filter(([k]) => !before.has(k)).map(([, v]) => v);
+      const gone = [...before.entries()].filter(([k]) => !after.has(k)).map(([, v]) => v);
+      const ds = qc.getQueryData<api.UploadedDataset[]>(["datasets", cid]) || [];
+      const newFiles = ds.filter((d) => !dsBefore.has(d.id));
+      const sc = qc.getQueryData<api.SiteScan | null>(["site-scan", cid]);
+      const pagesAfter = (qc.getQueryData<api.CrawledPage[]>(["crawled-pages", cid]) || []).length;
+      const lines: string[] = [];
+      if (added.length) lines.push(`נוספו **${added.length}** מילות מפתח חדשות לעמוד (מסומנות בסגול בהיר): ${added.slice(0, 40).join(", ")}${added.length > 40 ? ` ועוד ${added.length - 40}` : ""}`);
+      if (gone.length) lines.push(`${gone.length} מילות מפתח כבר לא מופיעות בנתונים (בטווח התאריכים שנבחר): ${gone.slice(0, 20).join(", ")}`);
+      if (newFiles.length) lines.push(`קבצים חדשים שנכללו: ${newFiles.map((d) => `${d.filename || "קובץ"}${d.kw_count ? ` (${d.kw_count} מילות מפתח${d.new_keywords?.length ? `, ${d.new_keywords.length} חדשות` : ""})` : ""}`).join(" · ")}`);
+      if (sc && sc.id !== scanBefore && sc.status === "done") lines.push(`סריקת אתר חדשה מ-${new Date(sc.finished_at || sc.started_at).toLocaleString("he-IL", { dateStyle: "short", timeStyle: "short" })}: ${sc.pages_total} דפים${sc.new_pages?.length ? `, מתוכם ${sc.new_pages.length} חדשים` : ""}`);
+      else if (pagesAfter !== pagesBefore) lines.push(`מספר הדפים הידועים השתנה: ${pagesBefore} ← ${pagesAfter}`);
+      const unacked = (qc.getQueryData<{ keyword: string; acknowledged_at: string | null }[]>(["kw-seen", cid]) || []).filter((s) => !s.acknowledged_at && after.has(s.keyword));
+      if (unacked.length && !added.length) lines.push(`יש **${unacked.length}** מילות מפתח חדשות שהגיעו מאז הבדיקה האחרונה (מהעלאת קבצים או מהסנכרון), והן מסומנות בסגול בהיר: ${unacked.slice(0, 40).map((s) => after.get(s.keyword)).join(", ")}`);
+      if (!added.length && !gone.length && !newFiles.length && !unacked.length && !(sc && sc.id !== scanBefore)) lines.unshift("אין שינויים מאז הטעינה הקודמת. כל הנתונים כבר מעודכנים.");
+      lines.push(`סה"כ בעמוד עכשיו: **${after.size}** מילות מפתח, נתוני חיפוש ${from} עד ${to}.`);
+      setReport({ at: new Date().toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" }), lines, newKws: added });
+    } finally { setRefreshing(false); }
+  };
 
   // Ranking URLs for the shared-URL filter, most keywords first.
   const { data: crawled } = useQuery({ queryKey: ["crawled-pages", cid], queryFn: () => api.listCrawledPages(cid), enabled: !!cid });
@@ -262,6 +360,13 @@ export default function StructureKeywordsPage() {
     for (const c of crawled || []) if (c.title) t.set(pathKey(c.url), c.title);
     return { base: client?.domain ? (/^https?:\/\//.test(client.domain) ? client.domain : `https://${client.domain}`) : "", titleOf: (path: string) => t.get(pathKey(path)) || null };
   }, [crawled, client]);
+  // Every page we know of (ranking + scanned) — target options for keywords with no ranking page.
+  const allPageOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const o of urlOptions) m.set(o.key, o.url);
+    for (const c of crawled || []) if (!m.has(norm(c.url))) m.set(norm(c.url), c.url);
+    return [...m.values()];
+  }, [urlOptions, crawled]);
   const filterUrl = (url: string) => { setUrlFilter(norm(url)); setFilterMode(simQ.trim() ? "both" : "url"); };
   const kwActive = filterMode !== "url" && !!simQ.trim();
   const urlActive = filterMode !== "kw" && !!urlFilter;
@@ -296,13 +401,15 @@ export default function StructureKeywordsPage() {
     }, 70);
   };
 
-  const renderCard = ({ term, pgs, written }: { term: string; pgs: KwPageRow[]; written: { url: string; title: string; created_at: string }[] }, copy = false) => {
+  const renderCard = ({ term, pgs, written, file }: { term: string; pgs: KwPageRow[]; written: { url: string; title: string; created_at: string }[]; file?: api.UploadedKeyword }, copy = false) => {
     // Accepted AI decision on this keyword: its own color, collapsed by default, details always shown.
     const dec = decisionByKw.get(term);
     const dc = dec ? decisionColor(dec.color) : null;
     const sel = selectedKws.has(term);
+    const fresh = isNewKw(term);
     const kwOpen = copy || !dec || !!decKwOpen[term];
     const boxStyle: React.CSSProperties = {
+      ...(fresh && !dc ? { background: "#f5f3ff", borderColor: "#c4b5fd", borderRightWidth: 5 } : {}),
       ...(dc ? { background: dc.bg, borderColor: dc.border, borderRightWidth: 5 } : {}),
       ...(sel && !copy ? { outline: `3px solid ${SELECTED_COLOR.border}`, outlineOffset: 1, ...(dc ? {} : { background: SELECTED_COLOR.bg, borderColor: SELECTED_COLOR.border, borderRightWidth: 5 }) } : {}),
     };
@@ -339,22 +446,36 @@ export default function StructureKeywordsPage() {
       ...written.filter((w) => !gscUrls.has(norm(w.url))).map((w) => ({ url: w.url, position: null, impressions: null, written: true, isNew: !assignedUrls.has(norm(w.url)) })),
     ];
     items.sort((a, b) => (isFullMatch(term, b.url) ? 1 : 0) - (isFullMatch(term, a.url) ? 1 : 0) || matchScore(term, b.url) - matchScore(term, a.url) || (b.impressions || 0) - (a.impressions || 0));
-    const candidates = items.map((i) => i.url);
+    // No ranking page (keyword known only from an uploaded file) → offer all the site's pages.
+    const candidates = items.length ? items.map((i) => i.url) : allPageOptions;
     const newUrlSet = new Set(items.filter((i) => i.isNew).map((i) => norm(i.url)));
     const flashing = flash === term;
     return (
       <div key={term} data-focus={copy ? undefined : term} ref={copy ? undefined : (el) => { rowRefs.current[term] = el; }} style={flashing ? undefined : boxStyle} className={`border rounded-lg p-3 transition-colors ${flashing ? "border-brand-400 bg-brand-50/60 ring-2 ring-brand-200" : "border-slate-200"}`}>
         {decHeader}
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div className="font-medium text-slate-900 flex items-center gap-2">
+          <div className="font-medium text-slate-900 flex items-center gap-2 flex-wrap">
             {term}
+            {fresh && <span className="badge bg-violet-200 text-violet-800 inline-flex items-center gap-1"><Sparkles size={11} /> חדשה</span>}
             {cannibal && <span className="badge bg-rose-50 text-rose-600 inline-flex items-center gap-1"><AlertTriangle size={11} /> {pgs.length} עמודים</span>}
             {pgs.length === 0 && written.length > 0 && <span className="badge bg-violet-50 text-violet-600">נכתב עמוד חדש</span>}
+            {pgs.length === 0 && file && <span className="badge bg-sky-50 text-sky-700 inline-flex items-center gap-1"><FileSpreadsheet size={11} /> רק מקובץ שהועלה</span>}
           </div>
-          <div className="text-xs text-slate-400">
-            {pgs.length ? <>{total.toLocaleString()} חשיפות · {clicks.toLocaleString()} קליקים · מיקום ממוצע {avgPos.toFixed(1)}</> : "אין עדיין נתוני חיפוש"}
+          <div className="text-xs text-slate-400 flex items-center gap-2">
+            {pgs.length ? <>{total.toLocaleString()} חשיפות · {clicks.toLocaleString()} קליקים · מיקום ממוצע {avgPos.toFixed(1)}</>
+              : file ? <>{file.impressions.toLocaleString()} חשיפות · {file.clicks.toLocaleString()} קליקים{file.position != null ? ` · מיקום ${file.position.toFixed(1)}` : ""} (מהקובץ)</> : "אין עדיין נתוני חיפוש"}
+            {!copy && (
+              <button className="text-slate-400 hover:text-rose-600 inline-flex items-center gap-0.5" title="המילה לא רלוונטית: הסר אותה מהרשימה ומהניתוח. אפשר להחזיר אותה מתיקיית 'מילים שהוסרו'" disabled={exclude.isPending} onClick={() => exclude.mutate(term)}>
+                <Trash2 size={12} /> הסר מילה
+              </button>
+            )}
           </div>
         </div>
+        {pgs.length === 0 && file && (
+          <div className="mt-1 text-xs text-sky-800 bg-sky-50 rounded px-2 py-1">
+            המילה הגיעה מקובץ Search Console שהועלה ({file.files.join(", ")}). בקובץ הזה אין פילוח לפי עמוד, ולכן לא ידוע איזה עמוד מדורג עליה. אפשר לבחור לה עמוד יעד מכל דפי האתר.
+          </div>
+        )}
         {items.length > 0 && (
           <ul className="mt-2 divide-y divide-slate-100">
             {items.map((it) => {
@@ -404,14 +525,25 @@ export default function StructureKeywordsPage() {
   return (
     <div>
       <PageHeader title="ביטויי יעד ועמודי יעד" subtitle={client ? `${client.name} · הגדרת עמוד היעד לכל ביטוי` : "ביטויי יעד ועמודי יעד"} />
-      <DataSourceBanner cid={cid} match={["Search Console"]} />
+      <DataSourceBanner cid={cid} match={["Search Console"]} onRefresh={doRefresh} refreshing={refreshing} />
+
+      {/* Result of "עדכן": what changed on this page */}
+      {report && (
+        <div className="card mb-4 border-r-4 border-r-violet-400 bg-violet-50/40">
+          <div className="flex items-start justify-between gap-2">
+            <div className="font-semibold text-violet-900 flex items-center gap-2"><RefreshCw size={16} /> העמוד עודכן ({report.at})</div>
+            <button className="text-slate-400 hover:text-slate-700" onClick={() => setReport(null)}><X size={16} /></button>
+          </div>
+          <ul className="mt-1.5 space-y-1 text-sm text-slate-700">{report.lines.map((l, i) => <li key={i} className="flex gap-1.5"><span className="text-violet-400">•</span><Md text={l} /></li>)}</ul>
+        </div>
+      )}
 
       {/* One AI tool: combined analysis (site map + recommendations) and chat, in sync. Page paths in AI text link to the page by title. */}
       <PageLinkContext.Provider value={pageLinks}>
       <StructureAiPlan cid={cid} from={from} to={to} decisions={decisions || []} selection={selection} onSelect={setSelection}
         pageOptions={urlOptions.map((o) => ({ url: o.url, label: o.label }))}
-        kwLines={(kws) => kws.map((k) => { const ps = fullByTerm.get(k) || []; return `${k} | ${ps.reduce((n, r) => n + r.impressions, 0)} חשיפות | ${ps.slice(0, 5).map((r) => `${decodePath(r.page)} (מ' ${r.position}, ${r.impressions})`).join("; ") || "אין דירוג"}`; })}
-        renderCards={(kws) => kws.map((k) => renderCard({ term: k, pgs: fullByTerm.get(k) || [], written: writtenByTerm.get(k) || [] }, true))} />
+        kwLines={(kws) => kws.map((k) => { const ps = fullByTerm.get(k) || []; const f = fileByLower.get(k.toLowerCase()); return ps.length ? `${k} | ${ps.reduce((n, r) => n + r.impressions, 0)} חשיפות | ${ps.slice(0, 5).map((r) => `${decodePath(r.page)} (מ' ${r.position}, ${r.impressions})`).join("; ")}` : `${k} | ${f ? `${f.impressions} חשיפות, מיקום ${f.position ?? "?"} (מקובץ שהועלה, בלי נתון עמוד)` : "אין דירוג"}`; })}
+        renderCards={(kws) => kws.map((k) => renderCard({ term: k, pgs: fullByTerm.get(k) || [], written: writtenByTerm.get(k) || [], file: fileByLower.get(k.toLowerCase()) }, true))} />
       </PageLinkContext.Provider>
 
       {/* #6: new written pages that still need a target-page decision */}
@@ -456,7 +588,7 @@ export default function StructureKeywordsPage() {
 
       {isLoading ? (
         <Spinner />
-      ) : (rows || []).length === 0 && newPages.length === 0 ? (
+      ) : (rows || []).length === 0 && newPages.length === 0 && fileOnly.length === 0 ? (
         <div className="card text-center py-10 text-slate-500 text-sm">
           <Network size={36} className="mx-auto mb-2 text-slate-300" />
           אין נתוני Search Console בטווח שנבחר. ודא שהלקוח מחובר ל-GSC וסונכרן, או הרחב את טווח התאריכים.
@@ -464,11 +596,23 @@ export default function StructureKeywordsPage() {
       ) : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <Tile label="סה״כ ביטויים" value={byTerm.size} />
+            <Tile label="סה״כ ביטויים (חיבור חי + קבצים)" value={allTermCount} />
             <Tile label="הוגדר עמוד יעד" value={definedCount} />
-            <Tile label="ממתינים להגדרה" value={Math.max(0, byTerm.size - definedCount)} />
+            <Tile label="ממתינים להגדרה" value={Math.max(0, allTermCount - definedCount)} />
             <Tile label="ביטויים בקניבליזציה" value={cannibalCount} alert={cannibalCount > 0} />
           </div>
+          <p className="text-xs text-slate-500 -mt-2 mb-4">
+            {liveLower.size} מילות מפתח מהחיבור החי ל-Search Console בטווח שנבחר, ועוד {fileOnly.length} שמופיעות רק בקבצים שהועלו
+            {(excluded?.length || 0) > 0 ? ` · ${excluded!.length} הוסרו ידנית` : ""}.
+          </p>
+
+          {/* New keywords (from uploads / sync) — light purple until acknowledged */}
+          {newCount > 0 && (
+            <div className="mb-4 rounded-lg border border-violet-300 bg-violet-50 px-3 py-2 text-sm text-violet-900 flex items-center justify-between gap-2 flex-wrap">
+              <span className="inline-flex items-center gap-1.5"><Sparkles size={15} className="text-violet-600" /> <b>{newCount}</b> מילות מפתח חדשות מסומנות בסגול בהיר ברשימה למטה.</span>
+              <button className="btn-secondary text-xs py-1 px-2 border-violet-300 text-violet-700" disabled={ack.isPending} onClick={() => ack.mutate()}><Check size={12} /> בדקתי, הסר את הסימון</button>
+            </div>
+          )}
 
           {/* General filter: similar keywords / shared ranking URL / both (applies to both lists) */}
           <div className="card mb-4 space-y-2">
@@ -536,6 +680,26 @@ export default function StructureKeywordsPage() {
                 {definedOpen ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
               </button>
               {(definedOpen || kwActive || urlActive || !!selection) &&<div className="space-y-3 mt-3">{definedEntries.map((e) => renderCard(e))}</div>}
+            </div>
+          )}
+
+          {/* Keywords removed as irrelevant — hidden from the list and the AI analysis, restorable */}
+          {(excluded?.length || 0) > 0 && (
+            <div className="card mt-4">
+              <button className="w-full flex items-center justify-between gap-2 text-right" onClick={() => setExcludedOpen((o) => !o)}>
+                <h3 className="font-semibold flex items-center gap-2 text-slate-600"><Trash2 size={16} /> מילים שהוסרו <span className="text-xs font-normal text-slate-400">({excluded!.length}) · לא מוצגות ולא נכנסות לניתוח</span></h3>
+                {excludedOpen ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
+              </button>
+              {excludedOpen && (
+                <ul className="mt-2 flex flex-wrap gap-1.5">
+                  {excluded!.map((e) => (
+                    <li key={e.id} className="text-xs bg-slate-100 rounded-full pr-2.5 pl-1 py-0.5 inline-flex items-center gap-1">
+                      {e.keyword}
+                      <button className="text-brand-600 hover:text-brand-800 inline-flex items-center gap-0.5 rounded-full px-1" title="החזר לרשימה" disabled={restore.isPending} onClick={() => restore.mutate(e.id)}><RotateCcw size={11} /> החזר</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
         </>

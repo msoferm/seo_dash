@@ -704,9 +704,43 @@ export async function setRecommendationStatus(recId: number, status: RecStatus):
 export interface UploadedDataset {
   id: number; client_id: number; filename: string | null; source: string | null; data_type: string | null;
   date_from: string | null; date_to: string | null; row_count: number; mapping: Record<string, string> | null; created_at: string;
+  kw_count: number | null; new_keywords: string[] | null; new_pages: string[] | null; period_label: string | null; storage_path: string | null;
 }
-export async function uploadData(clientId: number, filename: string, content: string): Promise<{ dataset_id: number; source: string; data_type: string; row_count: number; columns: Record<string, string>; date_from: string | null; date_to: string | null; routed_to?: string | null }> {
-  return await invokeFn("data-upload", { client_id: clientId, filename, content });
+export interface UploadPeriod { date_from: string | null; date_to: string | null; period_label: string | null }
+export interface UploadDataResult { dataset_id: number; source: string; data_type: string; row_count: number; columns: Record<string, string>; date_from: string | null; date_to: string | null; routed_to?: string | null; kw_count?: number; new_keywords?: string[]; new_pages?: string[] }
+/** Uploads one file: the original goes to storage (so it can be downloaded/viewed again), then it is parsed. */
+export async function uploadData(clientId: number, filename: string, content: string, period?: UploadPeriod): Promise<UploadDataResult> {
+  let storage_path: string | null = null;
+  try {
+    const path = `${clientId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.csv`;
+    const body = new Blob(["﻿" + content.replace(/^﻿/, "")], { type: "text/csv;charset=utf-8" });
+    const { error } = await supabase.storage.from("uploads").upload(path, body, { contentType: "text/csv;charset=utf-8" });
+    if (!error) storage_path = path;
+  } catch { /* the data itself is still saved; only the original copy is missing */ }
+  return await invokeFn("data-upload", { client_id: clientId, filename, content, storage_path, ...(period || {}) });
+}
+export async function updateDatasetPeriod(id: number, p: UploadPeriod): Promise<void> {
+  const { error } = await supabase.from("uploaded_datasets").update(p).eq("id", id);
+  if (error) throw error;
+}
+/** The file's content as CSV: the stored original, or (files uploaded before originals were kept) rebuilt from the saved rows. */
+export async function getDatasetCsv(d: UploadedDataset): Promise<{ csv: string; rebuilt: boolean }> {
+  if (d.storage_path) {
+    const { data, error } = await supabase.storage.from("uploads").download(d.storage_path);
+    if (!error && data) return { csv: (await data.text()).replace(/^﻿/, ""), rebuilt: false };
+  }
+  const rows: UploadedRow[] = [];
+  for (let off = 0; off < 200000; off += 1000) {
+    const { data, error } = await supabase.from("uploaded_rows").select("*").eq("dataset_id", d.id).order("id").range(off, off + 999);
+    if (error) throw error;
+    rows.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  const fields = ["page", "query", "keyword", "clicks", "impressions", "ctr", "position", "sessions", "conversions"] as const;
+  const used = fields.filter((f) => rows.some((r) => r[f] != null));
+  const head = used.map((f) => d.mapping?.[f] || f);
+  const esc = (v: unknown) => { const t = v == null ? "" : String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+  return { csv: [head.map(esc).join(","), ...rows.map((r) => used.map((f) => esc(r[f])).join(","))].join("\n"), rebuilt: true };
 }
 export async function listDatasets(clientId: number): Promise<UploadedDataset[]> {
   const { data, error } = await supabase.from("uploaded_datasets").select("*").eq("client_id", clientId).order("created_at", { ascending: false });
@@ -725,8 +759,10 @@ export async function listUploadedRows(datasetId: number, limit = 50): Promise<U
 }
 
 export async function deleteDataset(id: number): Promise<void> {
+  const { data: d } = await supabase.from("uploaded_datasets").select("storage_path").eq("id", id).maybeSingle();
   const { error } = await supabase.from("uploaded_datasets").delete().eq("id", id);
   if (error) throw error;
+  if (d?.storage_path) await supabase.storage.from("uploads").remove([d.storage_path]);
 }
 
 // ===== Site crawl =====
@@ -840,10 +876,52 @@ export interface KeywordTarget { id: number; keyword: string; page_url: string |
 export interface KwPageRow { page: string; term: string; clicks: number; impressions: number; ctr: number; position: number }
 
 /** GSC page↔query map (which keyword ranks on which page) for the full-picture view. */
-export async function getKeywordPageMap(clientId: number, from: string, to: string): Promise<KwPageRow[]> {
-  const { data, error } = await supabase.rpc("gsc_page_query_map", { p_client_id: clientId, p_from: from, p_to: to });
+export async function getKeywordPageMap(clientId: number, from: string, to: string, minImpr = 10): Promise<KwPageRow[]> {
+  const { data, error } = await supabase.rpc("gsc_page_query_map", { p_client_id: clientId, p_from: from, p_to: to, p_min_impr: minImpr });
   if (error) throw error;
   return (data || []).map((r: any) => ({ page: r.page, term: r.term, clicks: Number(r.clicks || 0), impressions: Number(r.impressions || 0), ctr: Number(r.ctr || 0), position: Number(r.position || 0) }));
+}
+/** Every keyword from every uploaded file (max across files). */
+export interface UploadedKeyword { term: string; impressions: number; clicks: number; position: number | null; files: string[]; first_uploaded: string }
+export async function getUploadedKeywords(clientId: number): Promise<UploadedKeyword[]> {
+  const { data, error } = await supabase.rpc("uploaded_keywords", { p_client_id: clientId });
+  if (error) throw error;
+  return (data || []).map((r: any) => ({ term: String(r.term).trim(), impressions: Number(r.impressions || 0), clicks: Number(r.clicks || 0), position: r.position == null ? null : Number(r.position), files: r.files || [], first_uploaded: r.first_uploaded }));
+}
+/** Keywords the team removed as irrelevant (hidden in the structure tab and the AI analysis; restorable). */
+export async function listExcludedKeywords(clientId: number): Promise<{ id: number; keyword: string; created_at: string }[]> {
+  const { data, error } = await supabase.from("excluded_keywords").select("id, keyword, created_at").eq("client_id", clientId).order("created_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+export async function excludeKeywords(clientId: number, keywords: string[]): Promise<void> {
+  const { error } = await supabase.from("excluded_keywords").upsert(keywords.map((k) => ({ client_id: clientId, keyword: k.trim().toLowerCase() })), { onConflict: "client_id,keyword", ignoreDuplicates: true });
+  if (error) throw error;
+}
+export async function restoreExcludedKeyword(id: number): Promise<void> {
+  const { error } = await supabase.from("excluded_keywords").delete().eq("id", id);
+  if (error) throw error;
+}
+/** New-keyword tracking for the structure tab: unacknowledged = new (light purple). */
+export async function listSeenKeywords(clientId: number): Promise<{ keyword: string; first_seen: string; acknowledged_at: string | null }[]> {
+  const out: { keyword: string; first_seen: string; acknowledged_at: string | null }[] = [];
+  for (let off = 0; off < 100000; off += 1000) {
+    const { data, error } = await supabase.from("kw_seen").select("keyword, first_seen, acknowledged_at").eq("client_id", clientId).range(off, off + 999);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+export async function registerSeenKeywords(clientId: number, keywords: string[]): Promise<void> {
+  for (let i = 0; i < keywords.length; i += 500) {
+    const { error } = await supabase.from("kw_seen").upsert(keywords.slice(i, i + 500).map((k) => ({ client_id: clientId, keyword: k.trim().toLowerCase() })), { onConflict: "client_id,keyword", ignoreDuplicates: true });
+    if (error) throw error;
+  }
+}
+export async function acknowledgeNewKeywords(clientId: number): Promise<void> {
+  const { error } = await supabase.from("kw_seen").update({ acknowledged_at: new Date().toISOString() }).eq("client_id", clientId).is("acknowledged_at", null);
+  if (error) throw error;
 }
 export async function listKeywordTargets(clientId: number): Promise<KeywordTarget[]> {
   const { data, error } = await supabase.from("keyword_targets").select("*").eq("client_id", clientId).order("keyword");
@@ -1821,7 +1899,7 @@ export interface StructureAnalysis {
   recs: StructureRec[]; date_from: string; date_to: string; created_at: string; stage: string | null;
   map: { clusters: StructureCluster[]; total: number; mapped: number; missing: number; scan_date: string | null } | null;
   hierarchy: { hubs: StructureHub[]; notes: string } | null;
-  debug?: { diag: { part: string; error?: string; stop?: string; parsed?: number; sample?: string }[]; dropped: number } | null;
+  debug?: { diag?: { part: string; error?: string; stop?: string; parsed?: number; sample?: string }[]; dropped?: number; done_units?: string[]; failed?: Record<string, string> } | null;
 }
 /** One stage of the combined analysis (map → hierarchy → recs per hub). */
 export async function runStructureStage(clientId: number, from: string, to: string, stage: "map" | "hierarchy" | "recs", hubId?: string): Promise<any> {
@@ -1917,8 +1995,8 @@ export async function undoStructureDecision(d: StructureDecision): Promise<void>
 export async function structureRecIntent(clientId: number, rec: StructureRec, lines: string[]): Promise<{ intent_analysis: string }> {
   return await invokeFn("structure-chat", { client_id: clientId, action: "rec_intent", rec: { title: rec.title, explanation: rec.explanation, keywords: rec.keywords }, lines });
 }
-export async function saveStructureRecs(clientId: number, recs: StructureRec[]): Promise<void> {
-  const { error } = await supabase.from("structure_ai_analysis").update({ recs }).eq("client_id", clientId);
+export async function saveStructureRecs(clientId: number, recs: StructureRec[], progress?: { done_units: string[]; failed: Record<string, string> }): Promise<void> {
+  const { error } = await supabase.from("structure_ai_analysis").update(progress ? { recs, debug: progress } : { recs }).eq("client_id", clientId);
   if (error) throw error;
 }
 
@@ -1927,6 +2005,7 @@ export interface SiteScan {
   id: number; client_id: number; status: "running" | "done" | "failed"; method: string | null;
   started_at: string; finished_at: string | null; pages_total: number; pages_ok: number; pages_failed: number;
   pages: { url: string; title: string; words: number; ok: boolean; issue: string | null }[]; error: string | null;
+  new_pages: { url: string; title: string }[] | null; removed_pages: { url: string; title: string }[] | null;
 }
 export async function startSiteScan(clientId: number): Promise<{ scan_id: number }> {
   return await invokeFn("site-scan", { client_id: clientId });

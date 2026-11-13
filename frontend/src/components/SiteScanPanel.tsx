@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ScanSearch, Loader2, CheckCircle2, AlertTriangle, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import * as api from "../api";
@@ -20,6 +20,12 @@ export default function SiteScanPanel({ cid }: { cid: number }) {
   });
   const start = useMutation({ mutationFn: () => api.startSiteScan(cid), onSuccess: () => qc.invalidateQueries({ queryKey: ["site-scan", cid] }) });
   const running = scan?.status === "running" && !isStale(scan);
+  // When a scan finishes, refresh everything that relies on the page list (all tabs).
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (running) wasRunning.current = true;
+    else if (wasRunning.current) { wasRunning.current = false; for (const k of ["crawled-pages", "structure-analysis", "datasets"]) qc.invalidateQueries({ queryKey: [k, cid] }); }
+  }, [running, qc, cid]);
   const problems = (scan?.pages || []).filter((p) => !p.ok || p.issue);
 
   return (
@@ -44,6 +50,13 @@ export default function SiteScanPanel({ cid }: { cid: number }) {
           ) : (
             <div className="space-y-1">
               <div className="flex items-center gap-1.5 text-emerald-800"><CheckCircle2 size={15} /> סריקה אחרונה: <b>{fmtDate(scan.finished_at || scan.started_at)}</b> · {scan.method === "wordpress" ? "רשימת הדפים מ-WordPress" : "רשימת הדפים ממפת האתר (sitemap)"}</div>
+              {scan.new_pages && (
+                <div className={scan.new_pages.length || scan.removed_pages?.length ? "text-violet-800" : "text-slate-500"}>
+                  {scan.new_pages.length || scan.removed_pages?.length
+                    ? <>לעומת הסריקה הקודמת: {scan.new_pages.length > 0 && <><b>{scan.new_pages.length}</b> דפים חדשים ({scan.new_pages.map((p) => p.title || decodePath(p.url)).join(" · ")})</>}{scan.new_pages.length > 0 && (scan.removed_pages?.length || 0) > 0 && " · "}{(scan.removed_pages?.length || 0) > 0 && <><b>{scan.removed_pages!.length}</b> דפים שכבר לא נמצאו ({scan.removed_pages!.map((p) => p.title || decodePath(p.url)).join(" · ")})</>}. כל הלשוניות עודכנו עם רשימת הדפים החדשה.</>
+                    : "אין דפים חדשים לעומת הסריקה הקודמת."}
+                </div>
+              )}
               <div className="text-slate-700"><b>{scan.pages_total}</b> דפים נסרקו · <span className="text-emerald-700">{scan.pages_ok} תקינים</span> · {problems.length ? <span className="text-amber-700">{problems.length} עם בעיה או הערה</span> : "ללא בעיות"}</div>
             </div>
           )}

@@ -132,7 +132,17 @@ async function scan(sb: any, clientId: number, scanId: number) {
     }
   };
   await Promise.all([worker(), worker(), worker(), worker(), worker()]);
-  await sb.from("site_scans").update({ status: "done", finished_at: new Date().toISOString(), pages_ok: ok, pages_failed: failed, pages: results }).eq("id", scanId);
+  // Compare with the previous completed scan: which pages are new / no longer listed.
+  const { data: prev } = await sb.from("site_scans").select("pages").eq("client_id", clientId).eq("status", "done").neq("id", scanId).order("started_at", { ascending: false }).limit(1).maybeSingle();
+  let newPages: any[] | null = null, removedPages: any[] | null = null;
+  if (prev?.pages?.length) {
+    const key = (u: string) => String(u || "").replace(/\/+$/, "").toLowerCase();
+    const before = new Set((prev.pages as any[]).map((p) => key(p.url)));
+    const now2 = new Set(results.map((p) => key(p.url)));
+    newPages = results.filter((p) => !before.has(key(p.url))).map((p) => ({ url: p.url, title: p.title }));
+    removedPages = (prev.pages as any[]).filter((p) => !now2.has(key(p.url))).map((p) => ({ url: p.url, title: p.title }));
+  }
+  await sb.from("site_scans").update({ status: "done", finished_at: new Date().toISOString(), pages_ok: ok, pages_failed: failed, pages: results, new_pages: newPages, removed_pages: removedPages }).eq("id", scanId);
 }
 
 Deno.serve(async (req) => {

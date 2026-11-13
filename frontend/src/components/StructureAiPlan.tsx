@@ -16,6 +16,24 @@ function decodePath(u: string): string {
 const PRI: Record<string, string> = { high: "עדיפות גבוהה", medium: "עדיפות בינונית", low: "עדיפות נמוכה" };
 
 export type Selection = { key: string; keywords: string[] } | null;
+
+/** Units of stage 3: one per hub, big hubs split into parts of CHILDREN_PER_PART children
+ *  ("H1.0", "H1.1" …; must match structure-chat), plus "SITE" for site-wide recommendations. */
+const CHILDREN_PER_PART = 4;
+function unitIds(a: StructureAnalysis | null | undefined): string[] {
+  const out: string[] = [];
+  for (const h of a?.hierarchy?.hubs || []) {
+    if (h.children.length <= CHILDREN_PER_PART) out.push(h.id);
+    else for (let p = 0; p * CHILDREN_PER_PART < h.children.length; p++) out.push(`${h.id}.${p}`);
+  }
+  return [...out, "SITE"];
+}
+function unitLabel(a: StructureAnalysis | null | undefined, u: string): string {
+  if (u === "SITE") return "המלצות ברמת האתר";
+  const [id, p] = u.split(".");
+  const h = a?.hierarchy?.hubs.find((x) => x.id === id);
+  return `${h?.name || id}${p != null ? ` (חלק ${Number(p) + 1})` : ""}`;
+}
 type Tab = "map" | "recs" | "chat";
 
 /** "יועץ מבנה האתר": one tool for the combined analysis (site map + recommendations) and the chat.
@@ -74,21 +92,28 @@ export default function StructureAdvisor({ cid, from, to, decisions, selection, 
       if (!a?.map) { setProg({ label: "שלב 1 מתוך 4: ממפה את כל מילות המפתח לקבוצות כוונה (כדקה)" }); await api.runStructureStage(cid, from, to, "map"); await refresh(); }
       if (!a?.map || !a?.hierarchy) { setProg({ label: "שלב 2 מתוך 4: בונה מפת אתר היררכית: עמודי אב ועמודי בן (כדקה)" }); await api.runStructureStage(cid, from, to, "hierarchy"); await refresh(); }
       const fresh = await api.getStructureAnalysis(cid);
-      const hubIds = [...(fresh?.hierarchy?.hubs || []).map((h) => h.id), "SITE"];
+      const units = unitIds(fresh);
       let recs: StructureRec[] = resume ? [...(fresh?.recs || [])] : [];
-      const doneHubs = new Set(recs.map((r) => r.key.split("-")[0]));
-      const todo = hubIds.filter((h) => !doneHubs.has(h));
-      let done = 0; const failed: string[] = [];
-      const label = "שלב 3 מתוך 4: המלצות לכל עמוד אב";
+      // A unit is done when it was recorded as done (even with 0 recs), or it already has recs.
+      const doneUnits = new Set<string>([...(resume ? fresh?.debug?.done_units || [] : []), ...recs.map((r) => r.key.split("-")[0])]);
+      // Recs of a hub analysed before it was split into parts ("H1") count for all its parts.
+      for (const u of units) if (u.includes(".") && doneUnits.has(u.split(".")[0])) doneUnits.add(u);
+      const todo = units.filter((u) => !doneUnits.has(u));
+      let done = 0; const failed: Record<string, string> = {};
+      const label = "שלב 3 מתוך 4: המלצות לכל עמוד אב (עמוד אב גדול מנותח בכמה חלקים)";
       setProg({ label, done: 0, total: todo.length });
-      await pool(todo, async (h) => {
-        try { const r = await api.runStructureStage(cid, from, to, "recs", h); recs = [...recs, ...(r.recs || [])]; await api.saveStructureRecs(cid, recs); }
-        catch { failed.push(h); }
+      await pool(todo, async (u) => {
+        try {
+          const r = await api.runStructureStage(cid, from, to, "recs", u);
+          recs = [...recs, ...(r.recs || [])]; doneUnits.add(u); delete failed[u];
+        } catch (e) { failed[u] = (e as Error).message || "שגיאה לא ידועה"; }
+        await api.saveStructureRecs(cid, recs, { done_units: [...doneUnits], failed });
         setProg({ label, done: ++done, total: todo.length });
       });
-      await api.saveStructureRecs(cid, recs);
+      await api.saveStructureRecs(cid, recs, { done_units: [...doneUnits], failed });
       await refresh();
-      if (failed.length) setErr(`${failed.length} חלקים לא הושלמו. אפשר ללחוץ "המשך את הניתוח" כדי להשלים רק אותם.`);
+      const nFailed = Object.keys(failed).length;
+      if (nFailed) setErr(`${nFailed} חלקים לא הושלמו: ${Object.entries(failed).map(([u, m]) => `${unitLabel(fresh, u)} (${m.slice(0, 120)})`).join(" · ")}. אפשר ללחוץ "המשך את הניתוח" כדי להשלים רק אותם.`);
       await fillIntents(recs);
       setTab("recs");
     } catch (e) {
@@ -97,8 +122,9 @@ export default function StructureAdvisor({ cid, from, to, decisions, selection, 
   };
 
   const hubsCount = analysis?.hierarchy?.hubs?.length || 0;
-  const recsHubs = new Set(allRecs.map((r) => r.key.split("-")[0]));
-  const incomplete = !!analysis?.map && (!analysis.hierarchy || ![...(analysis.hierarchy.hubs || []).map((h) => h.id), "SITE"].every((h) => recsHubs.has(h)));
+  const recsUnits = new Set([...allRecs.map((r) => r.key.split("-")[0]), ...(analysis?.debug?.done_units || [])]);
+  const isDone = (u: string) => recsUnits.has(u) || (u.includes(".") && recsUnits.has(u.split(".")[0]));
+  const incomplete = !!analysis?.map && (!analysis.hierarchy || !unitIds(analysis).every(isDone));
   const missingIntent = allRecs.filter((r) => !r.intent_analysis && r.keywords.length > 0).length;
   const askAbout = (r: StructureRec) => { setTab("chat"); setAsk({ text: `לגבי ההמלצה "${r.title}" (key: ${r.key}): פרט את השיקולים ואת החלופות, ומה היית עושה אחרת אם בכלל?`, id: Date.now() }); };
 
@@ -131,6 +157,12 @@ export default function StructureAdvisor({ cid, from, to, decisions, selection, 
             </div>
           )}
           {err && <div className="mt-3 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{err}</div>}
+          {!err && !prog && incomplete && analysis?.hierarchy && (
+            <div className="mt-3 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              הניתוח לא הושלם. חסרים: {unitIds(analysis).filter((u) => !isDone(u)).map((u) => unitLabel(analysis, u)).join(" · ")}
+              {Object.keys(analysis.debug?.failed || {}).length > 0 && <> · סיבה אחרונה: {Object.values(analysis.debug!.failed!)[0].slice(0, 140)}</>}. לחץ "המשך את הניתוח".
+            </div>
+          )}
           {!prog && missingIntent > 0 && !incomplete && (
             <button className="mt-3 btn-secondary text-xs" onClick={async () => { await fillIntents(allRecs); setProg(null); refresh(); }}><Sparkles size={13} /> השלם כוונת משתמש ל-{missingIntent} המלצות</button>
           )}

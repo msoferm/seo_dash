@@ -2,6 +2,11 @@
  * POST { client_id, filename, content }   (content = raw CSV/TSV text)
  * Auto-detects the source, columns and date range with Claude (from the header + a few
  * sample rows), normalizes all rows in code, and stores them for cross-source joining.
+ * Optional: date_from/date_to/period_label (the period the user says the file covers — overrides
+ * detection), storage_path (the original file in the "uploads" bucket).
+ * Also reports what is NEW in the file: keywords never seen before for this client (they are
+ * registered in kw_seen as unacknowledged → shown in light purple in the structure tab) and pages.
+ * rev: 2026-11-13a
  */
 import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { requireTeamMember } from "../_shared/supabase.ts";
@@ -38,7 +43,9 @@ Deno.serve(async (req) => {
   if (cors) return cors;
   try {
     const { sb } = await requireTeamMember(req);
-    const { client_id, filename, content } = await req.json();
+    const body = await req.json();
+    const { client_id, filename, content } = body;
+    const userFrom = body.date_from || null, userTo = body.date_to || null;
     if (!client_id || !content) return errorResponse("חסר קובץ", 400);
 
     const table = parseDelimited(content);
@@ -62,8 +69,9 @@ Deno.serve(async (req) => {
 
     const { data: ds, error: dsErr } = await sb.from("uploaded_datasets").insert({
       client_id, filename: filename || null, source: det.source || "אחר", data_type: det.data_type || null,
-      date_from: det.date_from && det.date_from !== "null" ? det.date_from : null,
-      date_to: det.date_to && det.date_to !== "null" ? det.date_to : null,
+      date_from: userFrom || (det.date_from && det.date_from !== "null" ? det.date_from : null),
+      date_to: userTo || (det.date_to && det.date_to !== "null" ? det.date_to : null),
+      period_label: body.period_label || null, storage_path: body.storage_path || null,
       row_count: dataRows.length, mapping: det.columns || {},
     }).select("id").single();
     if (dsErr) throw new Error(dsErr.message);
@@ -84,6 +92,35 @@ Deno.serve(async (req) => {
       const { error } = await sb.from("uploaded_rows").insert(rows.slice(i, i + 500));
       if (error) throw new Error(error.message);
     }
+
+    // ---- What is new in this file (keywords / pages never seen before for this client) ----
+    const isGscLike = /search console|analytics/i.test(String(det.source || ""));
+    const kwOf = (r: any) => (r.query || (!isGscLike ? r.keyword : null) || "").trim();
+    const fileKws = [...new Map(rows.map((r) => kwOf(r)).filter(Boolean).map((k) => [k.toLowerCase(), k])).values()];
+    let newKeywords: string[] = [];
+    if (fileKws.length) {
+      const seen = new Set<string>();
+      for (let i = 0; i < fileKws.length; i += 300) {
+        const { data } = await sb.from("kw_seen").select("keyword").eq("client_id", client_id).in("keyword", fileKws.slice(i, i + 300).map((k) => k.toLowerCase()));
+        for (const d of data || []) seen.add(d.keyword);
+      }
+      newKeywords = fileKws.filter((k) => !seen.has(k.toLowerCase()));
+      for (let i = 0; i < newKeywords.length; i += 500) {
+        await sb.from("kw_seen").upsert(newKeywords.slice(i, i + 500).map((k) => ({ client_id, keyword: k.toLowerCase() })), { onConflict: "client_id,keyword", ignoreDuplicates: true });
+      }
+    }
+    const normU = (u: string) => u.replace(/^https?:\/\/[^/]+/, "").replace(/\/+$/, "").toLowerCase();
+    const filePages = [...new Set(rows.map((r) => r.page).filter(Boolean) as string[])];
+    let newPages: string[] = [];
+    if (filePages.length) {
+      const known = new Set<string>();
+      const { data: pg } = await sb.from("pages").select("url").eq("client_id", client_id);
+      for (const p of pg || []) known.add(normU(p.url));
+      const { data: prev } = await sb.from("uploaded_rows").select("page").eq("client_id", client_id).neq("dataset_id", ds.id).not("page", "is", null).limit(20000);
+      for (const p of prev || []) known.add(normU(p.page));
+      newPages = filePages.filter((u) => !known.has(normU(u)));
+    }
+    await sb.from("uploaded_datasets").update({ kw_count: fileKws.length, new_keywords: newKeywords.slice(0, 2000), new_pages: newPages.slice(0, 500) }).eq("id", ds.id);
 
     // ---- Route into canonical tables (SAFE cases only) ----
     // Keyword Planner → keywords. Isolated under source='upload-data' (replaced each upload),
@@ -112,7 +149,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    return jsonResponse({ dataset_id: ds.id, source: det.source, data_type: det.data_type, row_count: dataRows.length, columns: det.columns, date_from: det.date_from, date_to: det.date_to, routed_to });
+    return jsonResponse({ dataset_id: ds.id, source: det.source, data_type: det.data_type, row_count: dataRows.length, columns: det.columns, date_from: userFrom || det.date_from, date_to: userTo || det.date_to, routed_to, kw_count: fileKws.length, new_keywords: newKeywords, new_pages: newPages });
   } catch (e) {
     return errorResponse(`שגיאה בהעלאה: ${(e as Error).message}`, 500);
   }
